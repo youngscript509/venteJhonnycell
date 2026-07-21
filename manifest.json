@@ -1,0 +1,19 @@
+{
+  "name": "JhonnyCell Vente",
+  "short_name": "JC Vente",
+  "description": "Poste de vente JhonnyCell — Ventes, Rapports, Approvisionnements",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0B1420",
+  "theme_color": "#0B1420",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='36' fill='%230B1420'/><text x='96' y='118' font-family='Arial' font-weight='900' font-size='84' fill='%2300E7A0' text-anchor='middle'>JV</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
