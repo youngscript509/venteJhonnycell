@@ -160,6 +160,21 @@ tr:last-child td{border-bottom:none;}
 .offline-banner{background:var(--accent-2-dim);color:var(--accent-2);font-size:12.5px;font-weight:600;padding:8px 16px;text-align:center;}
 .empty-state{text-align:center;padding:40px 16px;color:var(--text-faint);}
 .empty-state .ic{font-size:34px;margin-bottom:10px;}
+
+/* ============ IMPRESSION AUTOMATIQUE DU REÇU ============ */
+.thermal{font-family:var(--font-mono);font-size:12px;color:#111;width:100%;}
+.thermal h4{margin:0 0 4px;text-align:center;font-size:15px;letter-spacing:1px;}
+.thermal .center{text-align:center;}
+.thermal hr{border:none;border-top:1px dashed #999;margin:8px 0;}
+.thermal table{width:100%;border-collapse:collapse;font-size:11.5px;}
+.thermal td{padding:2px 0;}
+#receiptPrint{display:none;}
+@media print{
+  body *{visibility:hidden;}
+  #receiptPrint, #receiptPrint *{visibility:visible;}
+  #receiptPrint{display:block;position:absolute;top:0;left:0;width:100%;padding:8px;}
+  .modal-overlay, .bottom-nav, .topbar, .cart-bar, #toastLayer{display:none !important;}
+}
 </style>
 </head>
 <body>
@@ -793,15 +808,124 @@ async function confirmSale(){
   toast('Vente enregistrée ✓');
 }
 
+// ============ MODULE D'IMPRESSION AUTOMATIQUE (RawBT — Bluetooth / USB / imprimante intégrée) ============
+// RawBT est un pilote ESC/POS gratuit pour Android (Bluetooth, USB, réseau) : il pilote aussi bien une
+// mini-imprimante Bluetooth (GOOJPRT PT-210...) que la plupart des imprimantes intégrées des terminaux
+// Android tout-en-un. Installation une seule fois sur l'appareil : Google Play → "RawBT inkless print
+// service" (ru.a402d.rawbtprinter), puis appairer/sélectionner l'imprimante dans les réglages de RawBT.
+// Avantage : impression silencieuse, sans faire apparaître de fenêtre système à chaque vente.
+const RAWBT_PACKAGE = 'ru.a402d.rawbtprinter';
+const ESC = '\x1B', GS = '\x1D';
+
+// Construit le ticket au format ESC/POS brut (commandes d'imprimante mêlées au texte).
+function buildEscPosReceipt(v){
+  const biz = STATE.session.businessNom || '';
+  let s = '';
+  s += ESC + '@';                 // init imprimante
+  s += ESC + 'a' + '\x01';        // centré
+  s += ESC + 'E' + '\x01' + 'JhonnyCell' + ESC + 'E' + '\x00' + '\n';
+  s += biz + '\n';
+  s += fmtDateTime(v.date) + '\n';
+  s += '--------------------------------\n';
+  s += ESC + 'a' + '\x00';        // aligné à gauche
+  s += 'Recu N ' + v.numero + '\n';
+  if(v.client) s += 'Client: ' + v.client + '\n';
+  s += 'Vendeur: ' + v.vendeurNom + '\n';
+  if(v.modifiedBy) s += 'Modifiee par ' + v.modifiedBy + ' le ' + fmtDateTime(v.modifiedAt) + '\n';
+  s += '--------------------------------\n';
+  v.lignes.forEach(l => {
+    s += l.nom + '\n';
+    s += `  ${l.quantite} x ${fmtMoney(l.prixUnitaire)}`.padEnd(24) + fmtMoney(l.total) + '\n';
+  });
+  s += '--------------------------------\n';
+  s += ESC + 'E' + '\x01';        // gras
+  s += `TOTAL`.padEnd(20) + fmtMoney(v.total) + '\n';
+  s += ESC + 'E' + '\x00';
+  s += 'Paiement: ' + v.paymentMeth + (v.tauxUSD ? ` (taux ${v.tauxUSD})` : '') + '\n';
+  s += '--------------------------------\n';
+  s += ESC + 'a' + '\x01';        // centré
+  s += 'Merci de votre confiance !\n';
+  s += '\n\n\n';
+  s += GS + 'V' + '\x00';         // coupe papier (si l'imprimante le supporte)
+  return s;
+}
+
+function bytesToBase64(bytes){
+  let binary = '';
+  bytes.forEach(b => binary += String.fromCharCode(b));
+  return btoa(binary);
+}
+
+// Envoie les données brutes à RawBT via le schéma d'intent Android standard.
+function sendToRawBT(escposText){
+  const bytes = new TextEncoder().encode(escposText);
+  const b64 = bytesToBase64(bytes);
+  const intentUrl = 'intent:base64,' + b64 + '#Intent;scheme=rawbt;package=' + RAWBT_PACKAGE + ';end;';
+  window.location.href = intentUrl;
+}
+
+// Construit le gabarit du reçu au format ticket thermique (utilisé pour l'aperçu écran et le repli window.print()).
+function buildReceiptThermalHTML(v){
+  return `
+    <div class="thermal">
+      <h4>JhonnyCell</h4>
+      <div class="center">${escapeHtml(STATE.session.businessNom||'')}</div>
+      <div class="center">${fmtDateTime(v.date)}</div>
+      <hr>
+      <div>Reçu N° ${escapeHtml(v.numero)}</div>
+      ${v.client ? `<div>Client: ${escapeHtml(v.client)}</div>` : ''}
+      <div>Vendeur: ${escapeHtml(v.vendeurNom)}</div>
+      ${v.modifiedBy ? `<div>Modifiée par ${escapeHtml(v.modifiedBy)} le ${fmtDateTime(v.modifiedAt)}</div>` : ''}
+      <hr>
+      <table>${v.lignes.map(l => `<tr><td colspan="2">${escapeHtml(l.nom)}</td></tr><tr><td>${l.quantite} x ${fmtMoney(l.prixUnitaire)}</td><td style="text-align:right;">${fmtMoney(l.total)}</td></tr>`).join('')}</table>
+      <hr>
+      <table><tr><td><b>TOTAL</b></td><td style="text-align:right;"><b>${fmtMoney(v.total)}</b></td></tr></table>
+      <div>Paiement: ${escapeHtml(v.paymentMeth)}${v.tauxUSD ? ` (taux ${v.tauxUSD})` : ''}</div>
+      <hr><div class="center">Merci de votre confiance !</div>
+      <div class="center" style="font-size:9px;margin-top:6px;">Powered by Konbittech</div>
+    </div>`;
+}
+
+// Lance l'impression du reçu via RawBT (silencieuse, sans fenêtre système), puis referme
+// automatiquement le modal dès que l'impression est lancée.
+let _receiptPrinted = false;
+let _lastVente = null;
+function printReceiptNow(){
+  if(_receiptPrinted || !_lastVente) return;
+  _receiptPrinted = true;
+  sendToRawBT(buildEscPosReceipt(_lastVente));
+  closeModal();
+}
+// Repli si RawBT n'est pas installé sur l'appareil : dialogue d'impression du système.
+function printReceiptSystemFallback(){
+  window.print();
+  closeModal();
+}
+
 function showReceipt(v){
+  _receiptPrinted = false;
+  _lastVente = v;
+  const printHtml = buildReceiptThermalHTML(v);
+  $('#receiptPrint').innerHTML = printHtml;
+
   const linesHtml = v.lignes.map(l => `<tr><td>${escapeHtml(l.nom)}</td><td class="mono">${l.quantite}</td><td class="mono">${fmtMoney(l.total)}</td></tr>`).join('');
   openModal(`
     <div class="modal-head"><h3>Reçu — ${escapeHtml(v.numero)}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
     <p class="faint" style="font-size:12.5px;">${fmtDateTime(v.date)} · ${escapeHtml(v.vendeurNom)}</p>
     <table style="margin-top:12px;"><thead><tr><th>Article</th><th>Qté</th><th>Total</th></tr></thead><tbody>${linesHtml}</tbody></table>
     <div style="display:flex;justify-content:space-between;margin:14px 0;font-weight:700;"><span>Total (${escapeHtml(v.paymentMeth)})</span><span class="mono">${fmtMoney(v.total)}</span></div>
-    <button class="btn btn-ghost btn-block" onclick="closeModal()">Fermer</button>
+    <p class="faint" style="font-size:11.5px;margin-bottom:10px;">Impression automatique en cours (RawBT)...</p>
+    <div style="display:flex;gap:10px;">
+      <button class="btn btn-ghost" style="flex:1;" onclick="closeModal()">Fermer</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="printReceiptNow()">🖨 Réimprimer</button>
+    </div>
+    <button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px;" onclick="printReceiptSystemFallback()">RawBT non installé ? Imprimer via le système</button>
   `);
+
+  // Module d'impression automatique : dès qu'une vente est confirmée, le reçu part
+  // directement à l'impression sans action de l'utilisateur, puis le modal se ferme
+  // automatiquement au moment où l'impression est lancée.
+  setTimeout(printReceiptNow, 300);
 }
 
 /* ============================ HISTORIQUE / MODIFIER ============================ */
