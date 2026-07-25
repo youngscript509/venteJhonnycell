@@ -114,6 +114,12 @@ main{flex:1;padding:16px;padding-bottom:88px;max-width:900px;width:100%;margin:0
 .cat-chips{display:flex;gap:6px;overflow-x:auto;margin-bottom:12px;padding-bottom:4px;}
 .chip{white-space:nowrap;background:var(--surface-2);border:1px solid var(--line);color:var(--text-dim);padding:7px 13px;border-radius:999px;font-size:12.5px;font-weight:600;}
 .chip.active{background:var(--accent);color:#052018;border-color:transparent;}
+.picker-steps{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;font-size:12px;color:var(--text-faint);}
+.picker-steps .crumb{padding:5px 10px;border-radius:999px;background:var(--surface-2);}
+.picker-steps .crumb.current{background:var(--accent-dim);color:var(--accent);font-weight:600;}
+.picker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;max-height:50vh;overflow-y:auto;}
+.picker-item{padding:12px 8px;border:1px solid var(--line);border-radius:10px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;background:var(--bg-soft);}
+.picker-item:hover{border-color:var(--accent);color:var(--accent);}
 .prod-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;padding-bottom:180px;}
 .prod-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:left;display:flex;flex-direction:column;gap:6px;}
 .prod-card .nom{font-weight:700;font-size:13.5px;line-height:1.25;}
@@ -223,6 +229,7 @@ tr:last-child td{border-bottom:none;}
       <div class="section-head"><h2>Nouvelle vente</h2><span class="badge" id="stockCountBadge">0 produits</span></div>
       <div class="pos-toolbar">
         <input type="text" id="posSearch" placeholder="Rechercher un produit..." oninput="renderProductGrid()">
+        <button class="btn btn-ghost btn-sm" onclick="openVenteCatalogPicker()" title="Choisir depuis le catalogue">🔎 Catalogue</button>
       </div>
       <div class="cat-chips" id="catChips"></div>
       <div class="prod-grid" id="prodGrid"></div>
@@ -240,7 +247,7 @@ tr:last-child td{border-bottom:none;}
         <button class="btn btn-ghost btn-block" onclick="renderHistorique()">Filtrer</button>
       </div>
       <div class="card table-scroll">
-        <table><thead><tr><th>N°</th><th>Date</th><th>Vendeur</th><th>Paiement</th><th>Total</th><th></th></tr></thead>
+        <table><thead><tr><th>N°</th><th>Date</th><th>Vendeur</th><th>Paiement</th><th>Total</th><th>Statut</th><th></th></tr></thead>
         <tbody id="histBody"></tbody></table>
       </div>
     </section>
@@ -376,7 +383,7 @@ async function verifyPassword(password, saltB64, hashB64){
 
 /* ============================ INDEXEDDB LAYER ============================ */
 const DB_NAME = 'jhonnycellVenteDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let dbInstance = null;
 
 function openDB(){
@@ -400,6 +407,18 @@ function openDB(){
       }
       if(!db.objectStoreNames.contains('pending')) db.createObjectStore('pending', {keyPath:'pid', autoIncrement:true});
       if(!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', {keyPath:'key'});
+      // Catalogue intelligent (Catégorie → Marque → Modèle/Type), partagé avec le Manager —
+      // utilisé pour retrouver rapidement un produit lors d'une vente.
+      if(!db.objectStoreNames.contains('catalogCategories')) db.createObjectStore('catalogCategories', {keyPath:'id'});
+      if(!db.objectStoreNames.contains('catalogBrands')){
+        const s = db.createObjectStore('catalogBrands', {keyPath:'id'});
+        s.createIndex('categoryId','categoryId',{unique:false});
+      }
+      if(!db.objectStoreNames.contains('catalogModels')){
+        const s = db.createObjectStore('catalogModels', {keyPath:'id'});
+        s.createIndex('categoryId','categoryId',{unique:false});
+        s.createIndex('brandId','brandId',{unique:false});
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -422,6 +441,9 @@ const STATE = {
   products: [],
   ventes: [],
   approvisionnements: [],
+  catalogCategories: [],
+  catalogBrands: [],
+  catalogModels: [],
   cart: [],             // {productId, nom, categorie, prixUnitaire, qty, maxQty}
   currentRoute: 'vente',
   activeCat: 'Tous',
@@ -556,6 +578,9 @@ async function startApp(session, isFreshOnlineLogin){
   STATE.products = await DB.byIndex('products','businessId', session.businessId);
   STATE.ventes = await DB.byIndex('ventes','businessId', session.businessId);
   STATE.approvisionnements = await DB.byIndex('approvisionnements','businessId', session.businessId);
+  STATE.catalogCategories = await DB.all('catalogCategories');
+  STATE.catalogBrands = await DB.all('catalogBrands');
+  STATE.catalogModels = await DB.all('catalogModels');
 
   const today = todayStr();
   $('#histFrom').value = today; $('#histTo').value = today;
@@ -569,6 +594,7 @@ async function startApp(session, isFreshOnlineLogin){
       if(!isFreshOnlineLogin){ firebase.initializeApp(FIREBASE_CONFIG); }
       fsDB = firebase.firestore();
       attachListeners(session.businessId);
+      attachCatalogListeners();
       await flushPendingQueue();
     }catch(e){ console.warn('Firebase init différé', e); }
   }
@@ -590,6 +616,26 @@ function attachListeners(bizId){
         STATE[storeName] = await DB.byIndex(storeName,'businessId', bizId);
         renderRoute(STATE.currentRoute);
       }
+    }, (err) => console.warn('Sync listener error', storeName, err));
+    unsubscribers.push(unsub);
+  });
+}
+
+// Le catalogue (Catégorie → Marque → Modèle) est une nomenclature globale partagée avec le
+// Manager — pas filtrée par businessId.
+function attachCatalogListeners(){
+  ['catalogCategories','catalogBrands','catalogModels'].forEach(storeName => {
+    const unsub = fsDB.collection(storeName).onSnapshot(async (snap) => {
+      let changed = false;
+      for(const change of snap.docChanges()){
+        const remote = change.doc.data();
+        if(change.type === 'removed'){ await DB.delete(storeName, remote.id); changed = true; continue; }
+        const local = await DB.get(storeName, remote.id);
+        if(!local || (remote.updatedAt && (!local.updatedAt || remote.updatedAt > local.updatedAt)) || (!remote.updatedAt && !local)){
+          await DB.put(storeName, remote); changed = true;
+        }
+      }
+      if(changed) STATE[storeName] = await DB.all(storeName);
     }, (err) => console.warn('Sync listener error', storeName, err));
     unsubscribers.push(unsub);
   });
@@ -667,6 +713,75 @@ function renderRoute(route){
 }
 
 /* ============================ VENTE : GRILLE PRODUITS ============================ */
+/* ============================ CATALOGUE : sélecteur rapide (Catégorie → Marque → Modèle) ============================ */
+function sortAlpha(list){ return list.slice().sort((a,b)=>a.nom.localeCompare(b.nom, 'fr', {numeric:true, sensitivity:'base'})); }
+
+// Ouvre le sélecteur catalogue puis cherche le produit correspondant dans le stock du commerce.
+function openVenteCatalogPicker(){
+  openCatalogPicker(({nom}) => {
+    $('#posSearch').value = nom;
+    renderProductGrid();
+    const match = STATE.products.find(p => Number(p.quantite)>0 && p.nom.toLowerCase()===nom.toLowerCase());
+    if(match){ addToCart(match.id); }
+    else { toast(`Aucun stock disponible pour "${nom}".`, 'warn'); }
+  });
+}
+
+function openCatalogPicker(onPick){
+  let step = 'categorie', pickedCat = null, pickedBrand = null;
+
+  function draw(){
+    let crumbs = `<span class="crumb ${step==='categorie'?'current':''}">Catégorie</span>`;
+    if(pickedCat && pickedCat.mode!=='model_only') crumbs += `<span class="crumb ${step==='marque'?'current':''}">Marque</span>`;
+    if(pickedCat) crumbs += `<span class="crumb ${step==='modele'?'current':''}">${pickedCat.mode==='brand_type'?'Type':'Modèle'}</span>`;
+
+    let itemsHtml = '';
+    if(step === 'categorie'){
+      const cats = sortAlpha(STATE.catalogCategories);
+      itemsHtml = cats.length ? cats.map(c => `<div class="picker-item" data-id="${c.id}">${escapeHtml(c.nom)}</div>`).join('')
+        : `<p class="faint">Aucune catégorie — à créer depuis le Manager (Catalogue).</p>`;
+    } else if(step === 'marque'){
+      const brands = sortAlpha(STATE.catalogBrands.filter(b=>b.categoryId===pickedCat.id));
+      itemsHtml = brands.length ? brands.map(b => `<div class="picker-item" data-id="${b.id}">${escapeHtml(b.nom)}</div>`).join('')
+        : `<p class="faint">Aucune marque pour cette catégorie.</p>`;
+    } else if(step === 'modele'){
+      const list = pickedCat.mode==='brand_type'
+        ? sortAlpha(STATE.catalogModels.filter(m=>m.categoryId===pickedCat.id))
+        : sortAlpha(STATE.catalogModels.filter(m=>m.categoryId===pickedCat.id && m.brandId===(pickedBrand?pickedBrand.id:null)));
+      itemsHtml = list.length ? list.map(m => `<div class="picker-item" data-id="${m.id}">${escapeHtml(m.nom)}</div>`).join('')
+        : `<p class="faint">Aucun ${pickedCat.mode==='brand_type'?'type':'modèle'} disponible.</p>`;
+    }
+
+    $('#pickerBody').innerHTML = `<div class="picker-steps">${crumbs}</div><div class="picker-grid">${itemsHtml}</div>`;
+    $$('#pickerBody .picker-item').forEach(el => el.addEventListener('click', () => handlePick(el.dataset.id)));
+  }
+
+  function handlePick(id){
+    if(step === 'categorie'){
+      pickedCat = STATE.catalogCategories.find(c=>c.id===id);
+      step = pickedCat.mode === 'model_only' ? 'modele' : 'marque';
+      draw();
+    } else if(step === 'marque'){
+      pickedBrand = STATE.catalogBrands.find(b=>b.id===id);
+      step = 'modele';
+      draw();
+    } else if(step === 'modele'){
+      const model = STATE.catalogModels.find(m=>m.id===id);
+      let nom;
+      if(pickedCat.mode === 'brand_model' || pickedCat.mode === 'brand_type') nom = `${pickedBrand.nom} ${model.nom}`;
+      else nom = `${pickedCat.nom} ${model.nom}`;
+      closeModal();
+      onPick({ categorie: pickedCat.nom, nom });
+    }
+  }
+
+  openModal(`
+    <div class="modal-head"><h3>Choisir un produit</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div id="pickerBody"></div>
+  `, {wide:true});
+  draw();
+}
+
 function renderProductGrid(){
   const search = ($('#posSearch').value||'').toLowerCase();
   const cats = ['Tous', ...Array.from(new Set(STATE.products.map(p=>p.categorie).filter(Boolean)))];
@@ -762,16 +877,37 @@ function openCheckoutModal(){
       <select id="ckPayment" onchange="toggleTauxField()">${PAYMENT_METHODS.map(m=>`<option value="${m}">${m}</option>`).join('')}</select>
     </div>
     <div class="field hidden" id="ckTauxField"><label>Taux USD appliqué</label><input type="number" id="ckTaux" step="0.01" placeholder="ex: 132"></div>
-    <div style="display:flex;justify-content:space-between;margin:16px 0;font-weight:700;">
-      <span>Total à payer</span><span class="mono">${fmtMoney(total)}</span>
+    <div class="field-row">
+      <div class="field"><label>Rabais (HTG)</label><input type="number" id="ckRabais" min="0" step="0.01" value="0" oninput="updateCheckoutSoldePreview()"></div>
+      <div class="field"><label>Montant payé</label><input type="number" id="ckMontantPaye" min="0" step="0.01" placeholder="Vide = total" oninput="updateCheckoutSoldePreview()"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin:10px 0;font-weight:700;" id="ckTotalRow">
+      <span>Total à payer</span><span class="mono" id="ckTotalVal">${fmtMoney(total)}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin:0 0 16px;font-weight:700;color:var(--accent-2);" id="ckSoldeRow" class="hidden">
+      <span>Solde restant</span><span class="mono" id="ckSoldeVal">0 HTG</span>
     </div>
     <button class="btn btn-primary btn-block" onclick="confirmSale()">Confirmer la vente</button>
   `);
   toggleTauxField();
+  updateCheckoutSoldePreview();
 }
 function toggleTauxField(){
   const m = $('#ckPayment').value;
   $('#ckTauxField').classList.toggle('hidden', !isUSDPayment(m));
+}
+function checkoutTotalBrut(){ return STATE.cart.reduce((s,c)=>s+c.qty*c.prixUnitaire,0); }
+function updateCheckoutSoldePreview(){
+  const totalBrut = checkoutTotalBrut();
+  const rabais = Math.max(0, Math.min(totalBrut, Number($('#ckRabais').value)||0));
+  const total = totalBrut - rabais;
+  const montantPayeInput = $('#ckMontantPaye').value;
+  const montantPaye = montantPayeInput === '' ? total : Math.max(0, Number(montantPayeInput)||0);
+  const solde = Math.max(0, total - montantPaye);
+  $('#ckTotalVal').textContent = fmtMoney(total) + (rabais>0 ? ` (brut ${fmtMoney(totalBrut)})` : '');
+  const row = $('#ckSoldeRow');
+  if(solde > 0.004){ row.classList.remove('hidden'); $('#ckSoldeVal').textContent = fmtMoney(solde); }
+  else { row.classList.add('hidden'); }
 }
 
 async function confirmSale(){
@@ -782,13 +918,19 @@ async function confirmSale(){
   if(isUSDPayment(paymentMeth) && !tauxUSD){ toast('Veuillez indiquer le taux USD.', 'warn'); return; }
 
   const lignes = STATE.cart.map(c => ({ produitId:c.productId, nom:c.nom, categorie:c.categorie, quantite:c.qty, prixUnitaire:c.prixUnitaire, total:c.qty*c.prixUnitaire }));
-  const total = lignes.reduce((s,l)=>s+l.total,0);
+  const totalBrut = lignes.reduce((s,l)=>s+l.total,0);
+  const rabais = Math.max(0, Math.min(totalBrut, Number($('#ckRabais').value)||0));
+  const total = +(totalBrut - rabais).toFixed(2);
+  const montantPayeInput = $('#ckMontantPaye').value;
+  const montantPaye = montantPayeInput === '' ? total : Math.max(0, Number(montantPayeInput)||0);
+  const solde = Math.max(0, +(total - montantPaye).toFixed(2));
+  const statutPaiement = solde <= 0 ? 'Payé' : (montantPaye > 0 ? 'Partiel' : 'Crédit');
   const todaysCount = STATE.ventes.filter(v => (v.date||'').slice(0,10) === todayStr()).length;
   const numero = `V-${todayStr().replace(/-/g,'')}-${String(todaysCount+1).padStart(3,'0')}-${uid().slice(0,4)}`;
 
   const vente = {
     id: uid(), businessId: STATE.session.businessId, businessNom: STATE.session.businessNom,
-    numero, client: client || '', lignes, total, paymentMeth, tauxUSD,
+    numero, client: client || '', lignes, totalBrut, rabais, total, montantPaye, solde, statutPaiement, paymentMeth, tauxUSD,
     vendeurId: STATE.session.id, vendeurNom: STATE.session.nom,
     date: nowISO(), createdAt: nowISO(), updatedAt: nowISO()
   };
@@ -806,7 +948,7 @@ async function confirmSale(){
   updateCartBar();
   renderProductGrid();
   showReceipt(vente);
-  toast('Vente enregistrée ✓');
+  toast(solde>0 ? `Vente enregistrée — solde de ${fmtMoney(solde)} à suivre.` : 'Vente enregistrée ✓');
 }
 
 // ============ MODULE D'IMPRESSION AUTOMATIQUE (RawBT — Bluetooth / USB / imprimante intégrée) ============
@@ -840,8 +982,13 @@ function buildEscPosReceipt(v){
   });
   s += '--------------------------------\n';
   s += ESC + 'E' + '\x01';        // gras
+  if(v.rabais>0) s += `Sous-total`.padEnd(20) + fmtMoney(v.totalBrut) + '\n' + ESC+'E'+'\x00' + `Rabais`.padEnd(20) + '-' + fmtMoney(v.rabais) + '\n' + ESC+'E'+'\x01';
   s += `TOTAL`.padEnd(20) + fmtMoney(v.total) + '\n';
   s += ESC + 'E' + '\x00';
+  if(v.solde > 0){
+    s += `Paye`.padEnd(20) + fmtMoney(v.montantPaye) + '\n';
+    s += ESC + 'E' + '\x01' + `SOLDE RESTANT`.padEnd(20) + fmtMoney(v.solde) + '\n' + ESC + 'E' + '\x00';
+  }
   s += 'Paiement: ' + v.paymentMeth + (v.tauxUSD ? ` (taux ${v.tauxUSD})` : '') + '\n';
   s += '--------------------------------\n';
   s += ESC + 'a' + '\x01';        // centré
@@ -880,7 +1027,9 @@ function buildReceiptThermalHTML(v){
       <hr>
       <table>${v.lignes.map(l => `<tr><td colspan="2">${escapeHtml(l.nom)}</td></tr><tr><td>${l.quantite} x ${fmtMoney(l.prixUnitaire)}</td><td style="text-align:right;">${fmtMoney(l.total)}</td></tr>`).join('')}</table>
       <hr>
+      ${v.rabais>0 ? `<table><tr><td>Sous-total</td><td style="text-align:right;">${fmtMoney(v.totalBrut)}</td></tr><tr><td>Rabais</td><td style="text-align:right;">-${fmtMoney(v.rabais)}</td></tr></table>` : ''}
       <table><tr><td><b>TOTAL</b></td><td style="text-align:right;"><b>${fmtMoney(v.total)}</b></td></tr></table>
+      ${v.solde>0 ? `<table><tr><td>Payé</td><td style="text-align:right;">${fmtMoney(v.montantPaye)}</td></tr><tr><td><b>Solde restant</b></td><td style="text-align:right;"><b>${fmtMoney(v.solde)}</b></td></tr></table>` : ''}
       <div>Paiement: ${escapeHtml(v.paymentMeth)}${v.tauxUSD ? ` (taux ${v.tauxUSD})` : ''}</div>
       <hr><div class="center">Merci de votre confiance !</div>
       <div class="center" style="font-size:9px;margin-top:6px;">Powered by Konbittech</div>
@@ -942,7 +1091,7 @@ function renderHistorique(){
   }).sort((a,b) => (b.date||'').localeCompare(a.date||''));
 
   const body = $('#histBody');
-  if(!rows.length){ body.innerHTML = `<tr><td colspan="6" class="faint">Aucune vente sur cette période.</td></tr>`; return; }
+  if(!rows.length){ body.innerHTML = `<tr><td colspan="7" class="faint">Aucune vente sur cette période.</td></tr>`; return; }
   body.innerHTML = rows.map(v => `
     <tr>
       <td class="mono">${escapeHtml(v.numero)}</td>
@@ -950,8 +1099,43 @@ function renderHistorique(){
       <td>${escapeHtml(v.vendeurNom||'')}</td>
       <td>${escapeHtml(v.paymentMeth||'')}</td>
       <td class="mono">${fmtMoney(v.total)}</td>
-      <td>${canEditVente(v) ? `<button class="btn btn-sm btn-ghost" onclick="openEditVente('${v.id}')">Modifier</button>` : `<span class="badge">Verrouillée</span>`}</td>
+      <td>${venteStatutBadge(v)}</td>
+      <td style="white-space:nowrap;">
+        ${canEditVente(v) ? `<button class="btn btn-sm btn-ghost" onclick="openEditVente('${v.id}')">Modifier</button>` : `<span class="badge">Verrouillée</span>`}
+        ${v.solde>0 ? `<button class="btn btn-sm btn-amber" onclick="openEncaisserSoldeModal('${v.id}')">Encaisser</button>` : ''}
+      </td>
     </tr>`).join('');
+}
+
+function venteStatutBadge(v){
+  if(!v.solde || v.solde<=0) return `<span class="badge badge-mine">Payé</span>`;
+  const label = v.statutPaiement==='Crédit' ? `Crédit — ${fmtMoney(v.solde)}` : `Partiel — reste ${fmtMoney(v.solde)}`;
+  return `<span class="badge badge-readonly">${label}</span>`;
+}
+
+function openEncaisserSoldeModal(venteId){
+  const v = STATE.ventes.find(x=>x.id===venteId); if(!v) return;
+  openModal(`
+    <div class="modal-head"><h3>Encaisser le solde — ${escapeHtml(v.numero)}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <p style="font-size:13px;">Solde restant : <b class="mono">${fmtMoney(v.solde)}</b></p>
+    <div class="field" style="margin-top:12px;"><label>Montant reçu maintenant</label><input type="number" id="esMontant" min="0" step="0.01" max="${v.solde}" value="${v.solde}"></div>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn btn-ghost" style="flex:1;" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="saveEncaisserSolde('${v.id}')">Enregistrer</button>
+    </div>
+  `);
+}
+async function saveEncaisserSolde(venteId){
+  const v = STATE.ventes.find(x=>x.id===venteId); if(!v) return;
+  const montant = Math.max(0, Math.min(v.solde, Number($('#esMontant').value)||0));
+  if(montant<=0){ toast('Montant invalide.', 'warn'); return; }
+  v.montantPaye = +(v.montantPaye + montant).toFixed(2);
+  v.solde = Math.max(0, +(v.solde - montant).toFixed(2));
+  v.statutPaiement = v.solde<=0 ? 'Payé' : 'Partiel';
+  v.updatedAt = nowISO();
+  await DB.put('ventes', v);
+  await syncPush('ventes', v);
+  closeModal(); renderHistorique(); toast('Paiement enregistré ✅');
 }
 
 function openEditVente(venteId){
@@ -1019,7 +1203,12 @@ async function saveVenteEdit(venteId){
   }
 
   edited.lignes = edited.lignes.filter(l => l.quantite > 0);
-  edited.total = edited.lignes.reduce((s,l)=>s+l.total,0);
+  edited.totalBrut = edited.lignes.reduce((s,l)=>s+l.total,0);
+  edited.rabais = Math.max(0, Math.min(edited.totalBrut, Number(edited.rabais)||0));
+  edited.total = +(edited.totalBrut - edited.rabais).toFixed(2);
+  edited.montantPaye = Math.min(edited.montantPaye != null ? edited.montantPaye : edited.total, edited.total);
+  edited.solde = Math.max(0, +(edited.total - edited.montantPaye).toFixed(2));
+  edited.statutPaiement = edited.solde<=0 ? 'Payé' : (edited.montantPaye>0 ? 'Partiel' : 'Crédit');
   edited.paymentMeth = $('#editPayment').value;
   edited.modifiedBy = STATE.session.nom;
   edited.modifiedAt = nowISO();
