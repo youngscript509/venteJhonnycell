@@ -485,6 +485,7 @@ async function onlineLogin(email, password){
   const snap = await fsDBTmp.collection('users').doc(cred.user.uid).get();
   if(!snap.exists){ await firebase.auth().signOut(); throw new Error("Aucun profil trouvé pour ce compte. Contactez l'administrateur."); }
   const profile = snap.data();
+  if(profile.disabled){ await firebase.auth().signOut(); throw new Error("Ce compte a été suspendu par un administrateur."); }
   if(!SELLABLE_ROLES.includes(profile.role)){ await firebase.auth().signOut(); throw new Error("Ce compte n'a pas accès au poste de vente."); }
   if(!profile.businessId){ await firebase.auth().signOut(); throw new Error("Ce compte n'est assigné à aucun commerce. Contactez l'administrateur."); }
   let bizNom = profile.businessNom || '';
