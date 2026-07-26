@@ -114,7 +114,10 @@ main{flex:1;padding:16px;padding-bottom:88px;max-width:900px;width:100%;margin:0
 .cat-chips{display:flex;gap:6px;overflow-x:auto;margin-bottom:12px;padding-bottom:4px;}
 .chip{white-space:nowrap;background:var(--surface-2);border:1px solid var(--line);color:var(--text-dim);padding:7px 13px;border-radius:999px;font-size:12.5px;font-weight:600;}
 .chip.active{background:var(--accent);color:#052018;border-color:transparent;}
+.picker-search-wrap{margin-bottom:12px;}
 .picker-steps{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;font-size:12px;color:var(--text-faint);}
+.picker-steps .crumb{cursor:pointer;}
+.picker-steps .crumb:hover{color:var(--text);}
 .picker-steps .crumb{padding:5px 10px;border-radius:999px;background:var(--surface-2);}
 .picker-steps .crumb.current{background:var(--accent-dim);color:var(--accent);font-weight:600;}
 .picker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;max-height:50vh;overflow-y:auto;}
@@ -383,7 +386,7 @@ async function verifyPassword(password, saltB64, hashB64){
 
 /* ============================ INDEXEDDB LAYER ============================ */
 const DB_NAME = 'jhonnycellVenteDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 let dbInstance = null;
 
 function openDB(){
@@ -410,6 +413,7 @@ function openDB(){
       // Catalogue intelligent (Catégorie → Marque → Modèle/Type), partagé avec le Manager —
       // utilisé pour retrouver rapidement un produit lors d'une vente.
       if(!db.objectStoreNames.contains('catalogCategories')) db.createObjectStore('catalogCategories', {keyPath:'id'});
+      if(!db.objectStoreNames.contains('catalogGroups')) db.createObjectStore('catalogGroups', {keyPath:'id'});
       if(!db.objectStoreNames.contains('catalogBrands')){
         const s = db.createObjectStore('catalogBrands', {keyPath:'id'});
         s.createIndex('categoryId','categoryId',{unique:false});
@@ -444,6 +448,7 @@ const STATE = {
   catalogCategories: [],
   catalogBrands: [],
   catalogModels: [],
+  catalogGroups: [],
   cart: [],             // {productId, nom, categorie, prixUnitaire, qty, maxQty}
   currentRoute: 'vente',
   activeCat: 'Tous',
@@ -581,6 +586,7 @@ async function startApp(session, isFreshOnlineLogin){
   STATE.catalogCategories = await DB.all('catalogCategories');
   STATE.catalogBrands = await DB.all('catalogBrands');
   STATE.catalogModels = await DB.all('catalogModels');
+  STATE.catalogGroups = await DB.all('catalogGroups');
 
   const today = todayStr();
   $('#histFrom').value = today; $('#histTo').value = today;
@@ -624,7 +630,7 @@ function attachListeners(bizId){
 // Le catalogue (Catégorie → Marque → Modèle) est une nomenclature globale partagée avec le
 // Manager — pas filtrée par businessId.
 function attachCatalogListeners(){
-  ['catalogCategories','catalogBrands','catalogModels'].forEach(storeName => {
+  ['catalogCategories','catalogBrands','catalogModels','catalogGroups'].forEach(storeName => {
     const unsub = fsDB.collection(storeName).onSnapshot(async (snap) => {
       let changed = false;
       for(const change of snap.docChanges()){
@@ -727,49 +733,137 @@ function openVenteCatalogPicker(){
   });
 }
 
+// Un produit n'est proposé à la vente que s'il existe réellement en stock (quantité > 0) pour
+// CE business — chaque business ne vend que ce qu'il a lui-même reçu en approvisionnement.
+function hasStock(categorieNom, nom){
+  const c = (categorieNom||'').toLowerCase(), n = (nom||'').toLowerCase();
+  return STATE.products.some(p => Number(p.quantite)>0 && (p.categorie||'').toLowerCase()===c && (p.nom||'').toLowerCase()===n);
+}
+
+// ============ CATALOGUE : résolution des groupes partagés (lecture seule) ============
+// Une catégorie référence un ou plusieurs catalogGroups (STATE.catalogCategories[].groupIds).
+// Plusieurs catégories peuvent pointer vers le même groupe pour partager marques/modèles
+// (géré depuis le Manager) ; ici on ne fait que LIRE cette structure pour le sélecteur.
+function categoryMode(cat){
+  const g = STATE.catalogGroups.find(x=>x.id===cat.groupIds[0]);
+  return g ? g.mode : 'model_only';
+}
+function categoryBrandChips(cat){
+  const brands = STATE.catalogBrands.filter(b => cat.groupIds.includes(b.groupId));
+  const byName = new Map();
+  brands.forEach(b => {
+    const k = b.nom.toLowerCase();
+    if(!byName.has(k)) byName.set(k, { nom: b.nom, ids:[b.id] });
+    else byName.get(k).ids.push(b.id);
+  });
+  return sortAlpha(Array.from(byName.values()));
+}
+function categoryModelsForBrandIds(cat, brandIds){
+  return sortAlpha(STATE.catalogModels.filter(m => cat.groupIds.includes(m.groupId) && brandIds.includes(m.brandId)));
+}
+function categoryTypesOrModels(cat){
+  return sortAlpha(STATE.catalogModels.filter(m => cat.groupIds.includes(m.groupId) && m.brandId==null));
+}
+
+// Index à plat de tout le catalogue (catégorie+marque+modèle), FILTRÉ au stock réellement
+// disponible pour ce business — c'est la seule différence avec l'index utilisé côté Manager
+// (qui, lui, montre toute la nomenclature pour pouvoir approvisionner de nouveaux produits).
+function buildCatalogIndex(){
+  const items = [];
+  for(const cat of STATE.catalogCategories){
+    const mode = categoryMode(cat);
+    if(mode === 'model_only'){
+      categoryTypesOrModels(cat).forEach(m => items.push({ categorie: cat.nom, marque: null, nom: `${cat.nom} ${m.nom}`, label: `${cat.nom} — ${m.nom}` }));
+    } else {
+      categoryBrandChips(cat).forEach(b => {
+        const models = mode === 'brand_type' ? categoryTypesOrModels(cat) : categoryModelsForBrandIds(cat, b.ids);
+        models.forEach(m => items.push({ categorie: cat.nom, marque: b.nom, nom: `${b.nom} ${m.nom}`, label: `${cat.nom} — ${b.nom} ${m.nom}` }));
+      });
+    }
+  }
+  return items.filter(it => hasStock(it.categorie, it.nom));
+}
+
+// Sélecteur façon POS : recherche directe (toutes catégories confondues) OU navigation par
+// étapes Catégorie → Marque → Modèle/Type, avec fil d'Ariane cliquable pour revenir en arrière.
+// Ne montre QUE ce qui est en stock pour ce business (ni le catalogue complet, ni les autres commerces).
 function openCatalogPicker(onPick){
-  let step = 'categorie', pickedCat = null, pickedBrand = null;
+  let step = 'categorie', pickedCat = null, pickedMode = null, pickedBrandChip = null, brandChipsCache = [];
+  const searchIndex = buildCatalogIndex(); // déjà filtré au stock disponible
 
-  function draw(){
-    let crumbs = `<span class="crumb ${step==='categorie'?'current':''}">Catégorie</span>`;
-    if(pickedCat && pickedCat.mode!=='model_only') crumbs += `<span class="crumb ${step==='marque'?'current':''}">Marque</span>`;
-    if(pickedCat) crumbs += `<span class="crumb ${step==='modele'?'current':''}">${pickedCat.mode==='brand_type'?'Type':'Modèle'}</span>`;
+  function draw(query, cursorPos){
+    const crumbs = `
+      <span class="crumb ${step==='categorie'&&!query?'current':''}" data-target="categorie">Catégorie${pickedCat?' : '+escapeHtml(pickedCat.nom):''}</span>
+      ${pickedCat && pickedMode!=='model_only' ? `<span class="crumb ${step==='marque'&&!query?'current':''}" data-target="marque">Marque${pickedBrandChip?' : '+escapeHtml(pickedBrandChip.nom):''}</span>` : ''}
+      ${pickedCat ? `<span class="crumb ${step==='modele'&&!query?'current':''}" data-target="modele">${pickedMode==='brand_type'?'Type':'Modèle'}</span>` : ''}
+    `;
 
-    let itemsHtml = '';
-    if(step === 'categorie'){
-      const cats = sortAlpha(STATE.catalogCategories);
+    let itemsHtml = '', matches = null;
+    if(query){
+      const q = query.toLowerCase();
+      matches = searchIndex.filter(it => it.label.toLowerCase().includes(q)).slice(0,60);
+      itemsHtml = matches.length ? matches.map((it,idx) => `<div class="picker-item" data-search-idx="${idx}">${escapeHtml(it.label)}</div>`).join('')
+        : `<p class="faint">Aucun résultat en stock pour "${escapeHtml(query)}".</p>`;
+    } else if(step === 'categorie'){
+      const stockCats = new Set(searchIndex.map(it=>it.categorie));
+      const cats = sortAlpha(STATE.catalogCategories).filter(c => stockCats.has(c.nom));
       itemsHtml = cats.length ? cats.map(c => `<div class="picker-item" data-id="${c.id}">${escapeHtml(c.nom)}</div>`).join('')
-        : `<p class="faint">Aucune catégorie — à créer depuis le Manager (Catalogue).</p>`;
+        : `<p class="faint">Aucun produit en stock pour l'instant.</p>`;
     } else if(step === 'marque'){
-      const brands = sortAlpha(STATE.catalogBrands.filter(b=>b.categoryId===pickedCat.id));
-      itemsHtml = brands.length ? brands.map(b => `<div class="picker-item" data-id="${b.id}">${escapeHtml(b.nom)}</div>`).join('')
-        : `<p class="faint">Aucune marque pour cette catégorie.</p>`;
+      brandChipsCache = categoryBrandChips(pickedCat).filter(b => searchIndex.some(it => it.categorie===pickedCat.nom && it.marque===b.nom));
+      itemsHtml = brandChipsCache.length ? brandChipsCache.map((b,idx) => `<div class="picker-item" data-brand-idx="${idx}">${escapeHtml(b.nom)}</div>`).join('')
+        : `<p class="faint">Aucune marque en stock pour cette catégorie.</p>`;
     } else if(step === 'modele'){
-      const list = pickedCat.mode==='brand_type'
-        ? sortAlpha(STATE.catalogModels.filter(m=>m.categoryId===pickedCat.id))
-        : sortAlpha(STATE.catalogModels.filter(m=>m.categoryId===pickedCat.id && m.brandId===(pickedBrand?pickedBrand.id:null)));
+      const raw = pickedMode==='brand_type' ? categoryTypesOrModels(pickedCat) : categoryModelsForBrandIds(pickedCat, pickedBrandChip ? pickedBrandChip.ids : []);
+      const list = raw.filter(m => {
+        const composed = pickedMode==='model_only' ? `${pickedCat.nom} ${m.nom}` : `${pickedBrandChip.nom} ${m.nom}`;
+        return searchIndex.some(it => it.categorie===pickedCat.nom && it.nom.toLowerCase()===composed.toLowerCase());
+      });
       itemsHtml = list.length ? list.map(m => `<div class="picker-item" data-id="${m.id}">${escapeHtml(m.nom)}</div>`).join('')
-        : `<p class="faint">Aucun ${pickedCat.mode==='brand_type'?'type':'modèle'} disponible.</p>`;
+        : `<p class="faint">Aucun ${pickedMode==='brand_type'?'type':'modèle'} en stock.</p>`;
     }
 
-    $('#pickerBody').innerHTML = `<div class="picker-steps">${crumbs}</div><div class="picker-grid">${itemsHtml}</div>`;
-    $$('#pickerBody .picker-item').forEach(el => el.addEventListener('click', () => handlePick(el.dataset.id)));
+    $('#pickerBody').innerHTML = `
+      <div class="picker-search-wrap"><input type="text" id="pickerSearch" placeholder="🔎 Rechercher directement (ex: Samsung A12)…" value="${escapeHtml(query||'')}"></div>
+      <div class="picker-steps">${crumbs}</div>
+      <div class="picker-grid">${itemsHtml}</div>`;
+
+    $('#pickerSearch').addEventListener('input', (e) => draw(e.target.value, e.target.selectionStart));
+    if(query){ const inp = $('#pickerSearch'); inp.focus(); const p = cursorPos!=null?cursorPos:inp.value.length; inp.setSelectionRange(p,p); }
+
+    $$('#pickerBody .crumb[data-target]').forEach(el => el.addEventListener('click', () => {
+      const target = el.dataset.target;
+      if(target === 'categorie'){ pickedCat=null; pickedMode=null; pickedBrandChip=null; step='categorie'; }
+      else if(target === 'marque'){ pickedBrandChip=null; step='marque'; }
+      else if(target === 'modele'){ step='modele'; }
+      draw();
+    }));
+    if(matches){
+      $$('#pickerBody .picker-item[data-search-idx]').forEach(el => el.addEventListener('click', () => {
+        const it = matches[Number(el.dataset.searchIdx)];
+        closeModal();
+        onPick({ categorie: it.categorie, nom: it.nom });
+      }));
+    } else if(step === 'marque'){
+      $$('#pickerBody .picker-item[data-brand-idx]').forEach(el => el.addEventListener('click', () => {
+        pickedBrandChip = brandChipsCache[Number(el.dataset.brandIdx)];
+        step = 'modele';
+        draw();
+      }));
+    } else {
+      $$('#pickerBody .picker-item[data-id]').forEach(el => el.addEventListener('click', () => handlePick(el.dataset.id)));
+    }
   }
 
   function handlePick(id){
     if(step === 'categorie'){
       pickedCat = STATE.catalogCategories.find(c=>c.id===id);
-      step = pickedCat.mode === 'model_only' ? 'modele' : 'marque';
-      draw();
-    } else if(step === 'marque'){
-      pickedBrand = STATE.catalogBrands.find(b=>b.id===id);
-      step = 'modele';
+      pickedMode = categoryMode(pickedCat);
+      step = pickedMode === 'model_only' ? 'modele' : 'marque';
       draw();
     } else if(step === 'modele'){
       const model = STATE.catalogModels.find(m=>m.id===id);
-      let nom;
-      if(pickedCat.mode === 'brand_model' || pickedCat.mode === 'brand_type') nom = `${pickedBrand.nom} ${model.nom}`;
-      else nom = `${pickedCat.nom} ${model.nom}`;
+      const nom = (pickedMode === 'brand_model' || pickedMode === 'brand_type') ? `${pickedBrandChip.nom} ${model.nom}` : `${pickedCat.nom} ${model.nom}`;
       closeModal();
       onPick({ categorie: pickedCat.nom, nom });
     }
