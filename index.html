@@ -233,6 +233,7 @@ tr:last-child td{border-bottom:none;}
       <div class="pos-toolbar">
         <input type="text" id="posSearch" placeholder="Rechercher un produit..." oninput="renderProductGrid()">
         <button class="btn btn-ghost btn-sm" onclick="openVenteCatalogPicker()" title="Choisir depuis le catalogue">🔎 Catalogue</button>
+        <button class="btn btn-ghost btn-sm" onclick="openServicePicker()" title="Ajouter un service">🛠️ Service</button>
       </div>
       <div class="cat-chips" id="catChips"></div>
       <div class="prod-grid" id="prodGrid"></div>
@@ -386,7 +387,7 @@ async function verifyPassword(password, saltB64, hashB64){
 
 /* ============================ INDEXEDDB LAYER ============================ */
 const DB_NAME = 'jhonnycellVenteDB';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 let dbInstance = null;
 
 function openDB(){
@@ -406,6 +407,12 @@ function openDB(){
       }
       if(!db.objectStoreNames.contains('approvisionnements')){
         const s = db.createObjectStore('approvisionnements', {keyPath:'id'});
+        s.createIndex('businessId','businessId',{unique:false});
+      }
+      // v4 : services proposés par commerce (main d'œuvre, réparations, etc.) — vendables
+      // depuis la caisse comme un produit, mais sans gestion de stock.
+      if(!db.objectStoreNames.contains('services')){
+        const s = db.createObjectStore('services', {keyPath:'id'});
         s.createIndex('businessId','businessId',{unique:false});
       }
       if(!db.objectStoreNames.contains('pending')) db.createObjectStore('pending', {keyPath:'pid', autoIncrement:true});
@@ -445,6 +452,7 @@ const STATE = {
   products: [],
   ventes: [],
   approvisionnements: [],
+  services: [],
   catalogCategories: [],
   catalogBrands: [],
   catalogModels: [],
@@ -583,6 +591,7 @@ async function startApp(session, isFreshOnlineLogin){
   STATE.products = await DB.byIndex('products','businessId', session.businessId);
   STATE.ventes = await DB.byIndex('ventes','businessId', session.businessId);
   STATE.approvisionnements = await DB.byIndex('approvisionnements','businessId', session.businessId);
+  STATE.services = await DB.byIndex('services','businessId', session.businessId);
   STATE.catalogCategories = await DB.all('catalogCategories');
   STATE.catalogBrands = await DB.all('catalogBrands');
   STATE.catalogModels = await DB.all('catalogModels');
@@ -607,7 +616,7 @@ async function startApp(session, isFreshOnlineLogin){
 }
 
 function attachListeners(bizId){
-  ['products','ventes','approvisionnements'].forEach(storeName => {
+  ['products','ventes','approvisionnements','services'].forEach(storeName => {
     const unsub = fsDB.collection(storeName).where('businessId','==',bizId).onSnapshot(async (snap) => {
       let changed = false;
       for(const change of snap.docChanges()){
@@ -915,6 +924,43 @@ function addToCart(productId){
   updateCartBar();
   toast(`${p.nom} ajouté au panier`);
 }
+
+/* ============ SERVICES (sans gestion de stock) ============ */
+// Ouvre un sélecteur listant les services enregistrés pour ce commerce (créés depuis le
+// Manager, section Approvisionnement) afin de les ajouter directement à la facture en cours.
+function renderServicePickerList(search){
+  const s = (search||'').trim().toLowerCase();
+  const list = STATE.services
+    .filter(sv => !s || sv.nom.toLowerCase().includes(s))
+    .slice().sort((a,b)=>a.nom.localeCompare(b.nom,'fr',{sensitivity:'base'}));
+  const body = $('#servicePickerBody');
+  if(!body) return;
+  body.innerHTML = list.length ? list.map(sv => `
+    <button class="prod-card" style="width:100%;text-align:left;" onclick="addServiceToCart('${sv.id}')">
+      <div class="nom">${escapeHtml(sv.nom)}</div>
+      <div class="px">${fmtMoney(sv.prix)}</div>
+    </button>`).join('') : `<div class="empty-state"><div class="ic">🛠️</div>Aucun service enregistré pour ce commerce.</div>`;
+}
+function openServicePicker(){
+  openModal(`
+    <div class="modal-head"><h3>Ajouter un service</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="field"><input type="text" id="servicePickerSearch" placeholder="Rechercher un service..." oninput="renderServicePickerList(this.value)"></div>
+    <div id="servicePickerBody" style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;"></div>
+  `, {wide:true});
+  renderServicePickerList('');
+}
+function addServiceToCart(serviceId){
+  const sv = STATE.services.find(x=>x.id===serviceId);
+  if(!sv) return;
+  const existing = STATE.cart.find(c=>c.serviceId===serviceId);
+  if(existing){ existing.qty++; }
+  else {
+    STATE.cart.push({ serviceId, isService:true, nom:sv.nom, categorie:'Service', prixUnitaire:sv.prix, qty:1, maxQty:Infinity });
+  }
+  closeModal();
+  updateCartBar();
+  toast(`${sv.nom} ajouté au panier`);
+}
 function updateCartBar(){
   const bar = $('#cartBar');
   const count = STATE.cart.reduce((s,c)=>s+c.qty,0);
@@ -1011,7 +1057,7 @@ async function confirmSale(){
   const tauxUSD = isUSDPayment(paymentMeth) ? Number($('#ckTaux').value)||0 : null;
   if(isUSDPayment(paymentMeth) && !tauxUSD){ toast('Veuillez indiquer le taux USD.', 'warn'); return; }
 
-  const lignes = STATE.cart.map(c => ({ produitId:c.productId, nom:c.nom, categorie:c.categorie, quantite:c.qty, prixUnitaire:c.prixUnitaire, total:c.qty*c.prixUnitaire }));
+  const lignes = STATE.cart.map(c => ({ produitId:c.productId||null, serviceId:c.serviceId||null, nom:c.nom, categorie:c.categorie, quantite:c.qty, prixUnitaire:c.prixUnitaire, total:c.qty*c.prixUnitaire }));
   const totalBrut = lignes.reduce((s,l)=>s+l.total,0);
   const rabais = Math.max(0, Math.min(totalBrut, Number($('#ckRabais').value)||0));
   const total = +(totalBrut - rabais).toFixed(2);
