@@ -1092,6 +1092,19 @@ function buildEscPosReceipt(v){
   return s;
 }
 
+// Transforme un texte en ASCII pur pour l'imprimante thermique : ces imprimantes (via RawBT/
+// ESC-POS) ne comprennent qu'un jeu de caractères mono-octet — tout caractère UTF-8 multi-octets
+// (accents é/è/à, espace fine insécable des milliers, apostrophe typographique...) ressort comme
+// plusieurs symboles parasites à la place d'un seul caractère. On ne fait ça que pour la sortie
+// imprimante : l'écran garde les accents normalement.
+function toPrinterAscii(text){
+  return text
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')  // é→e, è→e, à→a, ç→c, ...
+    .replace(/[\u00A0\u202F\u2007\u2009]/g, ' ')        // espaces insécables/fines → espace normale
+    .replace(/[\u2018\u2019]/g, "'")                    // apostrophes typographiques → '
+    .replace(/[\u201C\u201D]/g, '"');                   // guillemets typographiques → "
+}
+
 function bytesToBase64(bytes){
   let binary = '';
   bytes.forEach(b => binary += String.fromCharCode(b));
@@ -1100,7 +1113,7 @@ function bytesToBase64(bytes){
 
 // Envoie les données brutes à RawBT via le schéma d'intent Android standard.
 function sendToRawBT(escposText){
-  const bytes = new TextEncoder().encode(escposText);
+  const bytes = new TextEncoder().encode(toPrinterAscii(escposText));
   const b64 = bytesToBase64(bytes);
   const intentUrl = 'intent:base64,' + b64 + '#Intent;scheme=rawbt;package=' + RAWBT_PACKAGE + ';end;';
   window.location.href = intentUrl;
