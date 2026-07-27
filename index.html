@@ -240,6 +240,16 @@ tr:last-child td{border-bottom:none;}
       <div class="prod-grid" id="prodGrid"></div>
     </section>
 
+    <!-- STOCK (lecture seule) -->
+    <section id="route-stock" class="section hidden">
+      <div class="section-head"><h2>Stock disponible</h2><span class="badge badge-readonly" id="stockCountBadge2">0 produits</span></div>
+      <div class="pos-toolbar">
+        <input type="text" id="stockSearch" placeholder="Rechercher un produit ou une catégorie..." oninput="renderStock()">
+      </div>
+      <div class="cat-chips" id="stockCatChips"></div>
+      <div class="prod-grid" id="stockGrid"></div>
+    </section>
+
     <!-- HISTORIQUE -->
     <section id="route-historique" class="section hidden">
       <div class="section-head"><h2>Historique des ventes</h2></div>
@@ -298,6 +308,7 @@ tr:last-child td{border-bottom:none;}
 
   <nav class="bottom-nav">
     <button class="nav-btn active" data-route="vente" onclick="renderRoute('vente')"><span class="nav-ic">🛒</span>Vente</button>
+    <button class="nav-btn" data-route="stock" onclick="renderRoute('stock')"><span class="nav-ic">📋</span>Stock</button>
     <button class="nav-btn" data-route="historique" onclick="renderRoute('historique')"><span class="nav-ic">🧾</span>Historique</button>
     <button class="nav-btn" data-route="rapports" onclick="renderRoute('rapports')"><span class="nav-ic">📊</span>Rapports</button>
     <button class="nav-btn" data-route="appro" onclick="renderRoute('appro')"><span class="nav-ic">📦</span>Appro</button>
@@ -447,6 +458,7 @@ const STATE = {
   cart: [],
   currentRoute: 'vente',
   activeCat: 'Tous',
+  stockActiveCat: 'Tous',
 };
 
 /* ============================ LOGIN UI ============================ */
@@ -684,6 +696,7 @@ function attachListeners(bizId){
     if(changed){
       STATE.products = await DB.byIndex('products','businessId', bizId);
       if(STATE.currentRoute === 'vente') renderProductGrid();
+      if(STATE.currentRoute === 'stock') renderStock();
       toast('📦 Produits synchronisés', 'ok');
     }
   }, (err) => console.warn('Sync products error', err));
@@ -811,6 +824,7 @@ async function forceSync(){
     }
     STATE.products = await DB.byIndex('products','businessId', bizId);
     if(STATE.currentRoute === 'vente') renderProductGrid();
+    if(STATE.currentRoute === 'stock') renderStock();
     
     toast(`✅ ${approCount} appro(s), ${svcCount} service(s), ${prodCount} produit(s) synchronisés !`, 'ok');
   } catch(err) {
@@ -859,6 +873,7 @@ function renderRoute(route){
   $('#route-'+route).classList.remove('hidden');
   $('#cartBar').classList.toggle('hidden', !(route==='vente' && STATE.cart.length));
   if(route === 'vente') renderProductGrid();
+  if(route === 'stock') renderStock();
   if(route === 'historique') renderHistorique();
   if(route === 'rapports') renderRapports();
   if(route === 'appro') renderAppro();
@@ -1033,6 +1048,35 @@ function renderProductGrid(){
   }).join('');
 }
 function setActiveCat(c){ STATE.activeCat = c; renderProductGrid(); }
+
+/* ============ STOCK (consultation lecture seule) ============ */
+function renderStock(){
+  const search = ($('#stockSearch').value||'').toLowerCase();
+  const cats = ['Tous', ...Array.from(new Set(STATE.products.map(p=>p.categorie).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'fr',{sensitivity:'base'}))];
+  $('#stockCatChips').innerHTML = cats.map(c => `<button class="chip ${STATE.stockActiveCat===c?'active':''}" onclick="setStockCat('${escapeHtml(c).replace(/'/g,"\\'")}')">${escapeHtml(c)}</button>`).join('');
+
+  let list = STATE.products;
+  if(STATE.stockActiveCat !== 'Tous') list = list.filter(p => p.categorie === STATE.stockActiveCat);
+  if(search) list = list.filter(p => (p.nom||'').toLowerCase().includes(search) || (p.categorie||'').toLowerCase().includes(search));
+  list = list.slice().sort((a,b)=>(a.categorie||'').localeCompare(b.categorie||'','fr',{sensitivity:'base'}) || (a.nom||'').localeCompare(b.nom||'','fr',{sensitivity:'base'}));
+
+  $('#stockCountBadge2').textContent = list.length + (list.length>1 ? ' produits' : ' produit');
+
+  const grid = $('#stockGrid');
+  if(!list.length){ grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><div class="ic">📋</div>Aucun produit trouvé.</div>`; return; }
+  grid.innerHTML = list.map(p => {
+    const stock = Number(p.quantite||0);
+    const stockClass = stock<=0 ? 'out' : (stock<=(p.seuil||5) ? 'low' : '');
+    const stockLabel = stock<=0 ? 'Rupture de stock' : (stock<=(p.seuil||5) ? `Stock faible : ${stock}` : `Stock : ${stock}`);
+    return `<div class="prod-card" style="cursor:default;">
+      <div class="nom">${escapeHtml(p.nom)}</div>
+      <div class="cat">${escapeHtml(p.categorie||'Sans catégorie')}</div>
+      <div class="stock ${stockClass}">${stockLabel}</div>
+      <div class="px">${fmtMoney(p.prixVente)}</div>
+    </div>`;
+  }).join('');
+}
+function setStockCat(c){ STATE.stockActiveCat = c; renderStock(); }
 
 function addToCart(productId){
   const p = STATE.products.find(x=>x.id===productId);
