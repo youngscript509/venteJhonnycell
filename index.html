@@ -121,11 +121,11 @@ main{flex:1;padding:16px;padding-bottom:88px;max-width:900px;width:100%;margin:0
 .picker-steps .crumb{padding:5px 10px;border-radius:999px;background:var(--surface-2);}
 .picker-steps .crumb.current{background:var(--accent-dim);color:var(--accent);font-weight:600;}
 .picker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;max-height:50vh;overflow-y:auto;}
-.picker-item{padding:12px 8px;border:1px solid var(--line);border-radius:10px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;background:var(--bg-soft);}
+.picker-item{padding:12px 8px;border:1px solid var(--line);border-radius:10px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;background:var(--bg-soft);color:var(--text);}
 .picker-item:hover{border-color:var(--accent);color:var(--accent);}
 .prod-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;padding-bottom:180px;}
-.prod-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:left;display:flex;flex-direction:column;gap:6px;}
-.prod-card .nom{font-weight:700;font-size:13.5px;line-height:1.25;}
+.prod-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:left;display:flex;flex-direction:column;gap:6px;color:var(--text);}
+.prod-card .nom{font-weight:700;font-size:13.5px;line-height:1.25;color:var(--text);}
 .prod-card .cat{font-size:10.5px;color:var(--text-faint);}
 .prod-card .stock{font-size:10.5px;} .prod-card .stock.low{color:var(--accent-2);} .prod-card .stock.out{color:var(--danger);}
 .prod-card .px{font-family:var(--font-mono);font-weight:700;color:var(--accent);margin-top:auto;}
@@ -136,16 +136,16 @@ main{flex:1;padding:16px;padding-bottom:88px;max-width:900px;width:100%;margin:0
 
 .cart-line{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line-soft);}
 .cart-line:last-child{border-bottom:none;}
-.cart-line .nom{flex:1;font-size:13.5px;font-weight:600;}
+.cart-line .nom{flex:1;font-size:13.5px;font-weight:600;color:var(--text);}
 .cart-line .sub{font-size:11px;color:var(--text-faint);}
 .qty-ctrl{display:flex;align-items:center;gap:6px;}
 .qty-ctrl button{width:28px;height:28px;border-radius:7px;background:var(--surface-3);border:1px solid var(--line);color:var(--text);font-weight:700;}
-.qty-ctrl span{min-width:22px;text-align:center;font-family:var(--font-mono);}
+.qty-ctrl span{min-width:22px;text-align:center;font-family:var(--font-mono);color:var(--text);}
 
 /* Tables */
 .table-scroll{overflow-x:auto;}
 table{width:100%;border-collapse:collapse;font-size:13px;}
-th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--line-soft);white-space:nowrap;}
+th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--line-soft);white-space:nowrap;color:var(--text);}
 th{color:var(--text-dim);font-size:11px;text-transform:uppercase;letter-spacing:.4px;font-weight:700;}
 tr:last-child td{border-bottom:none;}
 .faint{color:var(--text-faint);}
@@ -154,7 +154,7 @@ tr:last-child td{border-bottom:none;}
 /* Modal */
 .modal-overlay{position:fixed;inset:0;background:rgba(4,8,14,.72);backdrop-filter:blur(3px);z-index:60;display:flex;align-items:flex-end;justify-content:center;}
 @media(min-width:640px){.modal-overlay{align-items:center;}}
-.modal{background:var(--surface);border:1px solid var(--line);width:100%;max-width:480px;max-height:92vh;overflow-y:auto;border-radius:18px 18px 0 0;padding:20px;box-shadow:var(--shadow);}
+.modal{background:var(--surface);border:1px solid var(--line);width:100%;max-width:480px;max-height:92vh;overflow-y:auto;border-radius:18px 18px 0 0;padding:20px;box-shadow:var(--shadow);color:var(--text);}
 @media(min-width:640px){.modal{border-radius:18px;}}
 .modal.wide{max-width:640px;}
 .modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
@@ -314,16 +314,6 @@ tr:last-child td{border-bottom:none;}
 
 <script>
 'use strict';
-/* =========================================================================
-   JhonnyCell Vente — PWA indépendante du Manager, réservée aux postes de vente.
-   Un utilisateur se connecte à SON commerce (businessId issu de son profil).
-   Fonctions : enregistrer/modifier des ventes, rapports, consulter (lecture
-   seule) les approvisionnements reçus. Connexion locale possible après la
-   toute première connexion en ligne (auth PBKDF2 hors-ligne, verrouillage
-   anti brute-force par compte).
-   Même projet Firebase / même schéma Firestore que JhonnyCell POS Manager,
-   pour rester totalement compatible avec les données existantes.
-   ========================================================================= */
 
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyB0-q-wb_PwhMtp_N4ysL9FNrxfZQWWhdk",
@@ -369,7 +359,7 @@ function downloadCSV(filename, rows){
   URL.revokeObjectURL(a.href);
 }
 
-/* ============================ CRYPTO (auth locale hors-ligne) ============================ */
+/* ============================ CRYPTO ============================ */
 function bufToB64(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))); }
 function b64ToBuf(b64){ return Uint8Array.from(atob(b64), c => c.charCodeAt(0)); }
 
@@ -387,7 +377,7 @@ async function verifyPassword(password, saltB64, hashB64){
 
 /* ============================ INDEXEDDB LAYER ============================ */
 const DB_NAME = 'jhonnycellVenteDB';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 let dbInstance = null;
 
 function openDB(){
@@ -904,7 +894,7 @@ function addToCart(productId){
   toast(`${p.nom} ajouté au panier`);
 }
 
-/* ============ SERVICES ============ */
+/* ============ SERVICES (avec prix modifiable) ============ */
 function renderServicePickerList(search){
   const s = (search||'').trim().toLowerCase();
   const list = STATE.services
@@ -913,11 +903,44 @@ function renderServicePickerList(search){
   const body = $('#servicePickerBody');
   if(!body) return;
   body.innerHTML = list.length ? list.map(sv => `
-    <button class="prod-card" style="width:100%;text-align:left;" onclick="addServiceToCart('${sv.id}')">
+    <button class="prod-card" style="width:100%;text-align:left;" onclick="openServicePriceModal('${sv.id}')">
       <div class="nom">${escapeHtml(sv.nom)}</div>
       <div class="px">${fmtMoney(sv.prix)}</div>
     </button>`).join('') : `<div class="empty-state"><div class="ic">🛠️</div>Aucun service enregistré pour ce commerce.</div>`;
 }
+
+function openServicePriceModal(serviceId){
+  const sv = STATE.services.find(x=>x.id===serviceId);
+  if(!sv) return;
+  openModal(`
+    <div class="modal-head"><h3>Service — ${escapeHtml(sv.nom)}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <p class="faint" style="font-size:12px;margin-bottom:14px;">Le prix peut être ajusté selon la négociation avec le client.</p>
+    <div class="field"><label>Prix du service (HTG)</label>
+      <input type="number" id="servicePriceInput" min="0" step="0.01" value="${sv.prix}">
+    </div>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn btn-ghost" style="flex:1;" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="addServiceWithPrice('${sv.id}')">Ajouter au panier</button>
+    </div>
+  `);
+}
+
+function addServiceWithPrice(serviceId){
+  const sv = STATE.services.find(x=>x.id===serviceId);
+  if(!sv) return;
+  const prix = Number($('#servicePriceInput').value)||0;
+  if(prix <= 0){ toast('Veuillez saisir un prix valide.', 'warn'); return; }
+  
+  const existing = STATE.cart.find(c=>c.serviceId===serviceId);
+  if(existing){ existing.qty++; existing.prixUnitaire = prix; }
+  else {
+    STATE.cart.push({ serviceId, isService:true, nom:sv.nom, categorie:'Service', prixUnitaire:prix, qty:1, maxQty:Infinity });
+  }
+  closeModal();
+  updateCartBar();
+  toast(`${sv.nom} ajouté au panier (${fmtMoney(prix)})`);
+}
+
 function openServicePicker(){
   openModal(`
     <div class="modal-head"><h3>Ajouter un service</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
@@ -926,18 +949,7 @@ function openServicePicker(){
   `, {wide:true});
   renderServicePickerList('');
 }
-function addServiceToCart(serviceId){
-  const sv = STATE.services.find(x=>x.id===serviceId);
-  if(!sv) return;
-  const existing = STATE.cart.find(c=>c.serviceId===serviceId);
-  if(existing){ existing.qty++; }
-  else {
-    STATE.cart.push({ serviceId, isService:true, nom:sv.nom, categorie:'Service', prixUnitaire:sv.prix, qty:1, maxQty:Infinity });
-  }
-  closeModal();
-  updateCartBar();
-  toast(`${sv.nom} ajouté au panier`);
-}
+
 function updateCartBar(){
   const bar = $('#cartBar');
   const count = STATE.cart.reduce((s,c)=>s+c.qty,0);
