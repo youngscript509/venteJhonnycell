@@ -222,6 +222,7 @@ tr:last-child td{border-bottom:none;}
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <div class="sync-pill"><span class="dot" id="syncDot"></span><span id="syncText">—</span><span class="pending-badge hidden" id="pendingBadge">0</span></div>
+      <button class="icon-btn" title="Synchroniser" onclick="forceSync()">🔄</button>
       <button class="icon-btn" title="Déconnexion" onclick="confirmLogout()">⎋</button>
     </div>
   </div>
@@ -377,7 +378,7 @@ async function verifyPassword(password, saltB64, hashB64){
 
 /* ============================ INDEXEDDB LAYER ============================ */
 const DB_NAME = 'jhonnycellVenteDB';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 let dbInstance = null;
 
 function openDB(){
@@ -596,29 +597,125 @@ async function startApp(session, isFreshOnlineLogin){
       attachListeners(session.businessId);
       attachCatalogListeners();
       await flushPendingQueue();
+      toast('🔄 Synchronisation initiale en cours...', 'ok');
+      await forceSync();
     }catch(e){ console.warn('Firebase init différé', e); }
   }
 }
 
 function attachListeners(bizId){
-  ['products','ventes','approvisionnements','services'].forEach(storeName => {
-    const unsub = fsDB.collection(storeName).where('businessId','==',bizId).onSnapshot(async (snap) => {
-      let changed = false;
-      for(const change of snap.docChanges()){
-        const remote = change.doc.data();
-        if(change.type === 'removed'){ await DB.delete(storeName, remote.id); changed = true; continue; }
-        const local = await DB.get(storeName, remote.id);
-        if(!local || (remote.updatedAt && (!local.updatedAt || remote.updatedAt > local.updatedAt)) || (!remote.updatedAt && !local)){
-          await DB.put(storeName, remote); changed = true;
+  // Approvisionnements - écoute tous les documents, filtre côté client
+  const approUnsub = fsDB.collection('approvisionnements').onSnapshot(async (snap) => {
+    let changed = false;
+    for(const change of snap.docChanges()){
+      const remote = change.doc.data();
+      if(change.type === 'removed'){ 
+        const local = await DB.get('approvisionnements', remote.id);
+        if(local && local.businessId === bizId){ 
+          await DB.delete('approvisionnements', remote.id); 
+          changed = true; 
         }
+        continue; 
       }
-      if(changed){
-        STATE[storeName] = await DB.byIndex(storeName,'businessId', bizId);
-        renderRoute(STATE.currentRoute);
+      if(remote.businessId !== bizId) continue;
+      const local = await DB.get('approvisionnements', remote.id);
+      if(!local || (remote.updatedAt && (!local.updatedAt || remote.updatedAt > local.updatedAt)) || (!remote.updatedAt && !local)){
+        await DB.put('approvisionnements', remote); 
+        changed = true;
       }
-    }, (err) => console.warn('Sync listener error', storeName, err));
-    unsubscribers.push(unsub);
-  });
+    }
+    if(changed){
+      STATE.approvisionnements = await DB.byIndex('approvisionnements','businessId', bizId);
+      if(STATE.currentRoute === 'appro') renderAppro();
+      const count = STATE.approvisionnements.length;
+      if(count > 0) toast(`📦 ${count} approvisionnement(s) synchronisé(s)`, 'ok');
+    }
+  }, (err) => console.warn('Sync appro error', err));
+  unsubscribers.push(approUnsub);
+
+  // Services - écoute tous les documents, filtre côté client
+  const svcUnsub = fsDB.collection('services').onSnapshot(async (snap) => {
+    let changed = false;
+    for(const change of snap.docChanges()){
+      const remote = change.doc.data();
+      if(change.type === 'removed'){ 
+        const local = await DB.get('services', remote.id);
+        if(local && local.businessId === bizId){ 
+          await DB.delete('services', remote.id); 
+          changed = true; 
+        }
+        continue; 
+      }
+      if(remote.businessId !== bizId) continue;
+      const local = await DB.get('services', remote.id);
+      if(!local || (remote.updatedAt && (!local.updatedAt || remote.updatedAt > local.updatedAt)) || (!remote.updatedAt && !local)){
+        await DB.put('services', remote); 
+        changed = true;
+      }
+    }
+    if(changed){
+      STATE.services = await DB.byIndex('services','businessId', bizId);
+      const count = STATE.services.length;
+      if(count > 0) toast(`🛠️ ${count} service(s) synchronisé(s)`, 'ok');
+    }
+  }, (err) => console.warn('Sync services error', err));
+  unsubscribers.push(svcUnsub);
+
+  // Produits - écoute tous les documents, filtre côté client
+  const prodUnsub = fsDB.collection('products').onSnapshot(async (snap) => {
+    let changed = false;
+    for(const change of snap.docChanges()){
+      const remote = change.doc.data();
+      if(change.type === 'removed'){ 
+        const local = await DB.get('products', remote.id);
+        if(local && local.businessId === bizId){ 
+          await DB.delete('products', remote.id); 
+          changed = true; 
+        }
+        continue; 
+      }
+      if(remote.businessId !== bizId) continue;
+      const local = await DB.get('products', remote.id);
+      if(!local || (remote.updatedAt && (!local.updatedAt || remote.updatedAt > local.updatedAt)) || (!remote.updatedAt && !local)){
+        await DB.put('products', remote); 
+        changed = true;
+      }
+    }
+    if(changed){
+      STATE.products = await DB.byIndex('products','businessId', bizId);
+      if(STATE.currentRoute === 'vente') renderProductGrid();
+      toast('📦 Produits synchronisés', 'ok');
+    }
+  }, (err) => console.warn('Sync products error', err));
+  unsubscribers.push(prodUnsub);
+
+  // Ventes - écoute tous les documents, filtre côté client
+  const venteUnsub = fsDB.collection('ventes').onSnapshot(async (snap) => {
+    let changed = false;
+    for(const change of snap.docChanges()){
+      const remote = change.doc.data();
+      if(change.type === 'removed'){ 
+        const local = await DB.get('ventes', remote.id);
+        if(local && local.businessId === bizId){ 
+          await DB.delete('ventes', remote.id); 
+          changed = true; 
+        }
+        continue; 
+      }
+      if(remote.businessId !== bizId) continue;
+      const local = await DB.get('ventes', remote.id);
+      if(!local || (remote.updatedAt && (!local.updatedAt || remote.updatedAt > local.updatedAt)) || (!remote.updatedAt && !local)){
+        await DB.put('ventes', remote); 
+        changed = true;
+      }
+    }
+    if(changed){
+      STATE.ventes = await DB.byIndex('ventes','businessId', bizId);
+      if(STATE.currentRoute === 'historique') renderHistorique();
+      toast('🧾 Ventes synchronisées', 'ok');
+    }
+  }, (err) => console.warn('Sync ventes error', err));
+  unsubscribers.push(venteUnsub);
 }
 
 function attachCatalogListeners(){
@@ -666,12 +763,69 @@ async function updateSyncUI(){
   else { dot.className = 'dot offline'; text.textContent = 'Hors-ligne'; banner.classList.remove('hidden'); }
   if(pending.length){ badge.textContent = pending.length; badge.classList.remove('hidden'); } else { badge.classList.add('hidden'); }
 }
+
+// Synchronisation manuelle forcée
+async function forceSync(){
+  if(!fsDB || !navigator.onLine){ 
+    toast('Hors-ligne, impossible de synchroniser.', 'warn'); 
+    return; 
+  }
+  toast('🔄 Synchronisation en cours...', 'ok');
+  const bizId = STATE.session.businessId;
+  
+  try {
+    // Récupérer les approvisionnements
+    const approSnap = await fsDB.collection('approvisionnements').get();
+    let approCount = 0;
+    for(const doc of approSnap.docs){
+      const data = doc.data();
+      if(data.businessId === bizId){
+        await DB.put('approvisionnements', data);
+        approCount++;
+      }
+    }
+    STATE.approvisionnements = await DB.byIndex('approvisionnements','businessId', bizId);
+    if(STATE.currentRoute === 'appro') renderAppro();
+    
+    // Récupérer les services
+    const svcSnap = await fsDB.collection('services').get();
+    let svcCount = 0;
+    for(const doc of svcSnap.docs){
+      const data = doc.data();
+      if(data.businessId === bizId){
+        await DB.put('services', data);
+        svcCount++;
+      }
+    }
+    STATE.services = await DB.byIndex('services','businessId', bizId);
+    
+    // Récupérer les produits
+    const prodSnap = await fsDB.collection('products').get();
+    let prodCount = 0;
+    for(const doc of prodSnap.docs){
+      const data = doc.data();
+      if(data.businessId === bizId){
+        await DB.put('products', data);
+        prodCount++;
+      }
+    }
+    STATE.products = await DB.byIndex('products','businessId', bizId);
+    if(STATE.currentRoute === 'vente') renderProductGrid();
+    
+    toast(`✅ ${approCount} appro(s), ${svcCount} service(s), ${prodCount} produit(s) synchronisés !`, 'ok');
+  } catch(err) {
+    console.error('Sync error:', err);
+    toast('Erreur de synchronisation: ' + err.message, 'error');
+  }
+}
+
 window.addEventListener('online', async () => {
   STATE.online = true;
   if(STATE.session){
     try{
       if(!fsDB){ fsDB = firebase.firestore(); attachListeners(STATE.session.businessId); }
       await flushPendingQueue();
+      await forceSync();
     }catch(e){ console.warn(e); }
   }
   updateSyncUI();
