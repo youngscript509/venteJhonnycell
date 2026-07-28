@@ -111,9 +111,11 @@ main{flex:1;padding:16px;padding-bottom:88px;max-width:900px;width:100%;margin:0
 /* POS grid */
 .pos-toolbar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
 .pos-toolbar input{flex:1;min-width:140px;}
-.cat-chips{display:flex;gap:6px;overflow-x:auto;margin-bottom:12px;padding-bottom:4px;}
-.chip{white-space:nowrap;background:var(--surface-2);border:1px solid var(--line);color:var(--text-dim);padding:7px 13px;border-radius:999px;font-size:12.5px;font-weight:600;}
-.chip.active{background:var(--accent);color:#052018;border-color:transparent;}
+.cat-chips{display:flex;gap:7px;overflow-x:auto;margin-bottom:12px;padding-bottom:6px;scroll-snap-type:x proximity;}
+.chip{white-space:nowrap;scroll-snap-align:start;background:var(--surface-2);border:1.5px solid var(--line);color:var(--text-dim);padding:7px 14px;border-radius:999px;font-size:12.5px;font-weight:700;transition:transform .12s ease, filter .12s ease, box-shadow .12s ease;}
+.chip:hover{transform:translateY(-1px);}
+.chip:not(.active):hover{filter:brightness(1.2);}
+.chip.active{background:var(--accent);color:#052018;border-color:transparent;box-shadow:0 6px 16px -6px rgba(0,231,160,.5);}
 .picker-search-wrap{margin-bottom:12px;}
 .picker-steps{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;font-size:12px;color:var(--text-faint);}
 .picker-steps .crumb{cursor:pointer;}
@@ -1023,10 +1025,42 @@ function openCatalogPicker(onPick){
   draw();
 }
 
+/* ============ COULEURS DE CATÉGORIES (puces du scroll horizontal) ============ */
+const CATEGORY_PALETTE = [
+  {bg:'rgba(0,231,160,.15)',  border:'rgba(0,231,160,.45)',  text:'#00E7A0'},
+  {bg:'rgba(79,168,255,.15)', border:'rgba(79,168,255,.45)', text:'#4FA8FF'},
+  {bg:'rgba(255,176,32,.15)', border:'rgba(255,176,32,.45)', text:'#FFB020'},
+  {bg:'rgba(255,92,108,.15)', border:'rgba(255,92,108,.45)', text:'#FF5C6C'},
+  {bg:'rgba(178,120,255,.15)',border:'rgba(178,120,255,.45)',text:'#B278FF'},
+  {bg:'rgba(255,120,203,.15)',border:'rgba(255,120,203,.45)',text:'#FF78CB'},
+  {bg:'rgba(94,234,212,.15)', border:'rgba(94,234,212,.45)', text:'#5EEAD4'},
+  {bg:'rgba(250,204,21,.15)', border:'rgba(250,204,21,.45)', text:'#FACC15'},
+  {bg:'rgba(129,140,248,.15)',border:'rgba(129,140,248,.45)',text:'#818CF8'},
+  {bg:'rgba(52,211,153,.15)', border:'rgba(52,211,153,.45)', text:'#34D399'},
+];
+/* Hash simple et stable : une même catégorie garde toujours la même couleur, sur tous les écrans. */
+function categoryColor(nom){
+  const s = (nom||'').toString();
+  let hash = 0;
+  for(let i=0;i<s.length;i++){ hash = (hash*31 + s.charCodeAt(i)) >>> 0; }
+  return CATEGORY_PALETTE[hash % CATEGORY_PALETTE.length];
+}
+function catChipHtml(c, isActive, onclickFn){
+  const safe = escapeHtml(c).replace(/'/g,"\\'");
+  if(c === 'Tous'){
+    return `<button class="chip ${isActive?'active':''}" onclick="${onclickFn}('${safe}')">Tous</button>`;
+  }
+  const col = categoryColor(c);
+  const style = isActive
+    ? `background:${col.text};border-color:${col.text};color:#08131A;`
+    : `background:${col.bg};border-color:${col.border};color:${col.text};`;
+  return `<button class="chip" style="${style}" onclick="${onclickFn}('${safe}')">${escapeHtml(c)}</button>`;
+}
+
 function renderProductGrid(){
   const search = ($('#posSearch').value||'').toLowerCase();
   const cats = ['Tous', ...Array.from(new Set(STATE.products.map(p=>p.categorie).filter(Boolean)))];
-  $('#catChips').innerHTML = cats.map(c => `<button class="chip ${STATE.activeCat===c?'active':''}" onclick="setActiveCat('${escapeHtml(c).replace(/'/g,"\\'")}')">${escapeHtml(c)}</button>`).join('');
+  $('#catChips').innerHTML = cats.map(c => catChipHtml(c, STATE.activeCat===c, 'setActiveCat')).join('');
   $('#stockCountBadge').textContent = STATE.products.length + ' produits';
 
   let list = STATE.products;
@@ -1053,7 +1087,7 @@ function setActiveCat(c){ STATE.activeCat = c; renderProductGrid(); }
 function renderStock(){
   const search = ($('#stockSearch').value||'').toLowerCase();
   const cats = ['Tous', ...Array.from(new Set(STATE.products.map(p=>p.categorie).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'fr',{sensitivity:'base'}))];
-  $('#stockCatChips').innerHTML = cats.map(c => `<button class="chip ${STATE.stockActiveCat===c?'active':''}" onclick="setStockCat('${escapeHtml(c).replace(/'/g,"\\'")}')">${escapeHtml(c)}</button>`).join('');
+  $('#stockCatChips').innerHTML = cats.map(c => catChipHtml(c, STATE.stockActiveCat===c, 'setStockCat')).join('');
 
   let list = STATE.products;
   if(STATE.stockActiveCat !== 'Tous') list = list.filter(p => p.categorie === STATE.stockActiveCat);
