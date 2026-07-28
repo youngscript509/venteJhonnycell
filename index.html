@@ -1078,9 +1078,21 @@ function renderStock(){
 }
 function setStockCat(c){ STATE.stockActiveCat = c; renderStock(); }
 
+/* Un téléphone vendu = un IMEI. On détecte la catégorie (accents/majuscules ignorés) pour déclencher la saisie obligatoire. */
+function isPhoneCategory(nom){
+  const n = (nom||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+  return n === 'telephone' || n === 'telephones' || n.includes('telephone') || n.includes('smartphone');
+}
+
+/* Ne garde que des chiffres (IMEI = 14 à 17 chiffres selon le format), retire tout espace/symbole nuisible pour le stockage et l'impression thermique. */
+function sanitizeImeiInput(v){
+  return (v||'').replace(/[^0-9]/g,'').slice(0,17);
+}
+
 function addToCart(productId){
   const p = STATE.products.find(x=>x.id===productId);
   if(!p || Number(p.quantite||0) <= 0){ toast('Rupture de stock.', 'warn'); return; }
+  if(isPhoneCategory(p.categorie)){ openImeiModal(productId); return; }
   const existing = STATE.cart.find(c=>c.productId===productId);
   if(existing){
     if(existing.qty >= p.quantite){ toast('Stock insuffisant.', 'warn'); return; }
@@ -1090,6 +1102,40 @@ function addToCart(productId){
   }
   updateCartBar();
   toast(`${p.nom} ajouté au panier`);
+}
+
+function openImeiModal(productId){
+  const p = STATE.products.find(x=>x.id===productId);
+  if(!p) return;
+  const usedCount = STATE.cart.filter(c=>c.productId===productId).length;
+  if(usedCount >= Number(p.quantite||0)){ toast('Stock insuffisant.', 'warn'); return; }
+  openModal(`
+    <div class="modal-head"><h3>IMEI — ${escapeHtml(p.nom)}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <p class="faint" style="font-size:12.5px;margin-bottom:10px;">Chaque téléphone vendu doit être identifié par son IMEI. Chiffres uniquement, sans espace ni symbole.</p>
+    <div class="field"><label>IMEI du téléphone</label>
+      <input type="text" id="imeiInput" inputmode="numeric" maxlength="17" placeholder="ex: 356789101234567" oninput="this.value=sanitizeImeiInput(this.value)" onkeydown="if(event.key==='Enter')confirmAddPhoneToCart('${productId}')">
+    </div>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn btn-ghost" style="flex:1;" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="confirmAddPhoneToCart('${productId}')">Ajouter au panier</button>
+    </div>
+  `);
+  setTimeout(()=>{ const el=$('#imeiInput'); if(el) el.focus(); }, 50);
+}
+
+function confirmAddPhoneToCart(productId){
+  const p = STATE.products.find(x=>x.id===productId);
+  if(!p) return;
+  const el = $('#imeiInput');
+  const imei = sanitizeImeiInput(el ? el.value : '');
+  if(imei.length < 14){ toast('IMEI invalide — saisissez au moins 14 chiffres.', 'warn'); return; }
+  const usedCount = STATE.cart.filter(c=>c.productId===productId).length;
+  if(usedCount >= Number(p.quantite||0)){ toast('Stock insuffisant.', 'warn'); closeModal(); return; }
+  if(STATE.cart.some(c=>c.productId===productId && c.imei===imei)){ toast('Cet IMEI est déjà dans le panier.', 'warn'); return; }
+  STATE.cart.push({ productId, nom:p.nom, categorie:p.categorie, prixUnitaire:p.prixVente, qty:1, maxQty:p.quantite, imei });
+  closeModal();
+  updateCartBar();
+  toast(`${p.nom} ajouté au panier (IMEI ${imei})`);
 }
 
 /* ============ SERVICES (avec prix modifiable) ============ */
@@ -1167,12 +1213,12 @@ function renderCartModalContent(){
     <div class="cart-line">
       <div style="flex:1;">
         <div class="nom">${escapeHtml(c.nom)}</div>
-        <div class="sub">${fmtMoney(c.prixUnitaire)} / unité</div>
+        <div class="sub">${fmtMoney(c.prixUnitaire)} / unité${c.imei ? ' · IMEI: ' + escapeHtml(c.imei) : ''}</div>
       </div>
       <div class="qty-ctrl">
         <button onclick="changeCartQty(${i},-1)">−</button>
         <span>${c.qty}</span>
-        <button onclick="changeCartQty(${i},1)">+</button>
+        <button ${c.imei ? 'disabled title="Un IMEI par téléphone — ajoutez-en un autre depuis le catalogue"' : ''} onclick="changeCartQty(${i},1)">+</button>
       </div>
       <button class="icon-btn" onclick="removeCartLine(${i})">🗑</button>
     </div>`).join('');
@@ -1244,7 +1290,7 @@ async function confirmSale(){
   const tauxUSD = isUSDPayment(paymentMeth) ? Number($('#ckTaux').value)||0 : null;
   if(isUSDPayment(paymentMeth) && !tauxUSD){ toast('Veuillez indiquer le taux USD.', 'warn'); return; }
 
-  const lignes = STATE.cart.map(c => ({ produitId:c.productId||null, serviceId:c.serviceId||null, nom:c.nom, categorie:c.categorie, quantite:c.qty, prixUnitaire:c.prixUnitaire, total:c.qty*c.prixUnitaire }));
+  const lignes = STATE.cart.map(c => ({ produitId:c.productId||null, serviceId:c.serviceId||null, nom:c.nom, categorie:c.categorie, quantite:c.qty, prixUnitaire:c.prixUnitaire, total:c.qty*c.prixUnitaire, imei:c.imei||null }));
   const totalBrut = lignes.reduce((s,l)=>s+l.total,0);
   const rabais = Math.max(0, Math.min(totalBrut, Number($('#ckRabais').value)||0));
   const total = +(totalBrut - rabais).toFixed(2);
@@ -1309,6 +1355,7 @@ function buildEscPosReceipt(v){
   s += '--------------------------------\n';
   v.lignes.forEach(l => {
     s += l.categorie + ' - ' + l.nom + '\n';
+    if(l.imei) s += '  IMEI: ' + l.imei + '\n';
     s += `  ${l.quantite} x ${fmtMoney(l.prixUnitaire)}`.padEnd(24) + fmtMoney(l.total) + '\n';
   });
   s += '--------------------------------\n';
@@ -1370,7 +1417,7 @@ function buildReceiptThermalHTML(v){
       <div>Vendeur: ${escapeHtml(v.vendeurNom)}</div>
       ${v.modifiedBy ? `<div>Modifiée par ${escapeHtml(v.modifiedBy)} le ${fmtDateTime(v.modifiedAt)}</div>` : ''}
       <hr>
-      <table>${v.lignes.map(l => `<tr><td colspan="2">${escapeHtml(l.categorie)} - ${escapeHtml(l.nom)}</td></tr><tr><td>${l.quantite} x ${fmtMoney(l.prixUnitaire)}</td><td style="text-align:right;">${fmtMoney(l.total)}</td></tr>`).join('')}</table>
+      <table>${v.lignes.map(l => `<tr><td colspan="2">${escapeHtml(l.categorie)} - ${escapeHtml(l.nom)}</td></tr>${l.imei ? `<tr><td colspan="2" style="font-size:10px;">IMEI: ${escapeHtml(l.imei)}</td></tr>` : ''}<tr><td>${l.quantite} x ${fmtMoney(l.prixUnitaire)}</td><td style="text-align:right;">${fmtMoney(l.total)}</td></tr>`).join('')}</table>
       <hr>
       ${v.rabais>0 ? `<table><tr><td>Sous-total</td><td style="text-align:right;">${fmtMoney(v.totalBrut)}</td></tr><tr><td>Rabais</td><td style="text-align:right;">-${fmtMoney(v.rabais)}</td></tr></table>` : ''}
       <table><tr><td><b>TOTAL</b></td><td style="text-align:right;"><b>${fmtMoney(v.total)}</b></td></tr></table>
@@ -1400,7 +1447,7 @@ function showReceipt(v){
   const printHtml = buildReceiptThermalHTML(v);
   $('#receiptPrint').innerHTML = printHtml;
 
-  const linesHtml = v.lignes.map(l => `<tr><td>${escapeHtml(l.categorie)} — ${escapeHtml(l.nom)}</td><td class="mono">${l.quantite}</td><td class="mono">${fmtMoney(l.total)}</td></tr>`).join('');
+  const linesHtml = v.lignes.map(l => `<tr><td>${escapeHtml(l.categorie)} — ${escapeHtml(l.nom)}${l.imei ? `<br><span class="faint" style="font-size:11px;">IMEI: ${escapeHtml(l.imei)}</span>` : ''}</td><td class="mono">${l.quantite}</td><td class="mono">${fmtMoney(l.total)}</td></tr>`).join('');
   openModal(`
     <div class="modal-head"><h3>Reçu — ${escapeHtml(v.numero)}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
     <p class="faint" style="font-size:12.5px;">${fmtDateTime(v.date)} · ${escapeHtml(v.vendeurNom)}</p>
@@ -1490,12 +1537,12 @@ function openEditVente(venteId){
     <div class="cart-line">
       <div style="flex:1;">
         <div class="nom">${escapeHtml(l.nom)}</div>
-        <div class="sub">${fmtMoney(l.prixUnitaire)} / unité</div>
+        <div class="sub">${fmtMoney(l.prixUnitaire)} / unité${l.imei ? ' · IMEI: ' + escapeHtml(l.imei) : ''}</div>
       </div>
       <div class="qty-ctrl">
         <button onclick="editVenteQty(${i},-1)">−</button>
         <span id="editQty${i}">${l.quantite}</span>
-        <button onclick="editVenteQty(${i},1)">+</button>
+        <button ${l.imei ? 'disabled title="Un IMEI par téléphone"' : ''} onclick="editVenteQty(${i},1)">+</button>
       </div>
     </div>`).join('');
   window._editVente = JSON.parse(JSON.stringify(v));
