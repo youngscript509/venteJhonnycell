@@ -303,7 +303,7 @@ tr:last-child td{border-bottom:none;}
 
   <div class="cart-bar hidden" id="cartBar" onclick="openCartModal()">
     <div class="info" id="cartInfo">0 article</div>
-    <div class="total" id="cartTotal">0 HTG</div>
+    <div class="total" id="cartTotal">0 $HT</div>
   </div>
 
   <nav class="bottom-nav">
@@ -338,7 +338,7 @@ const FIREBASE_CONFIG = {
 };
 
 const SELLABLE_ROLES = ['Administrateur','Responsable','Vendeur','Comptable','Secrétaire'];
-const PAYMENT_METHODS = ['Espèces HTG','MonCash','Carte HTG','Espèces USD','CarteUSD'];
+const PAYMENT_METHODS = ['Espèces $HT','MonCash','Carte $HT','Espèces USD','CarteUSD'];
 const USD_PAYMENT_METHODS = ['Espèces USD','CarteUSD'];
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_MINUTES = 5;
@@ -352,7 +352,7 @@ const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now() + '-' + Math.random().toString(16).slice(2));
 const nowISO = () => new Date().toISOString();
 const todayStr = () => new Date().toISOString().slice(0,10);
-const fmtMoney = (n) => (Number(n)||0).toLocaleString('fr-HT', {minimumFractionDigits:0, maximumFractionDigits:2}) + ' HTG';
+const fmtMoney = (n) => (Number(n)||0).toLocaleString('fr-HT', {minimumFractionDigits:0, maximumFractionDigits:2}) + ' $HT';
 const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString('fr-FR', {day:'2-digit',month:'short',year:'numeric'}); } catch(e){ return iso; } };
 const fmtDateTime = (iso) => { try { return new Date(iso).toLocaleString('fr-FR', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(e){ return iso; } };
 const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1113,7 +1113,7 @@ function openServicePriceModal(serviceId){
   openModal(`
     <div class="modal-head"><h3>Service — ${escapeHtml(sv.nom)}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
     <p class="faint" style="font-size:12px;margin-bottom:14px;">Le prix peut être ajusté selon la négociation avec le client.</p>
-    <div class="field"><label>Prix du service (HTG)</label>
+    <div class="field"><label>Prix du service ($HT)</label>
       <input type="number" id="servicePriceInput" min="0" step="0.01" value="${sv.prix}">
     </div>
     <div style="display:flex;gap:10px;margin-top:14px;">
@@ -1205,14 +1205,14 @@ function openCheckoutModal(){
     </div>
     <div class="field hidden" id="ckTauxField"><label>Taux USD appliqué</label><input type="number" id="ckTaux" step="0.01" placeholder="ex: 132"></div>
     <div class="field-row">
-      <div class="field"><label>Rabais (HTG)</label><input type="number" id="ckRabais" min="0" step="0.01" value="0" oninput="updateCheckoutSoldePreview()"></div>
+      <div class="field"><label>Rabais ($HT)</label><input type="number" id="ckRabais" min="0" step="0.01" value="0" oninput="updateCheckoutSoldePreview()"></div>
       <div class="field"><label>Montant payé</label><input type="number" id="ckMontantPaye" min="0" step="0.01" placeholder="Vide = total" oninput="updateCheckoutSoldePreview()"></div>
     </div>
     <div style="display:flex;justify-content:space-between;margin:10px 0;font-weight:700;" id="ckTotalRow">
       <span>Total à payer</span><span class="mono" id="ckTotalVal">${fmtMoney(total)}</span>
     </div>
     <div style="display:flex;justify-content:space-between;margin:0 0 16px;font-weight:700;color:var(--accent-2);" id="ckSoldeRow" class="hidden">
-      <span>Solde restant</span><span class="mono" id="ckSoldeVal">0 HTG</span>
+      <span>Solde restant</span><span class="mono" id="ckSoldeVal">0 $HT</span>
     </div>
     <button class="btn btn-primary btn-block" onclick="confirmSale()">Confirmer la vente</button>
   `);
