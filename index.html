@@ -506,16 +506,33 @@ function openDB(){
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
+    // Un autre onglet/instance de l'app garde une version antérieure de la base ouverte :
+    // la requête reste en attente indéfiniment tant que cet autre onglet n'est pas fermé.
+    req.onblocked = () => {
+      console.warn("Ouverture d'IndexedDB bloquée par un autre onglet de l'application encore ouvert.");
+      toast?.("⚠️ Fermez les autres onglets/fenêtres de l'application puis rechargez pour continuer.", 'warn');
+    };
   });
 }
+
+/* Promesse unique résolue dès que le stockage local est prêt. Toute lecture/écriture DB
+   attend cette promesse plutôt que de supposer que dbInstance est déjà défini : ça évite
+   les erreurs "Cannot read properties of null (reading 'transaction')" en cas de clic rapide
+   sur "Se connecter" avant la fin de l'initialisation, ou d'ouverture ralentie/bloquée. */
+const dbReadyPromise = openDB().then(db => { dbInstance = db; return db; });
+async function ensureDB(){
+  if(dbInstance) return dbInstance;
+  return dbReadyPromise;
+}
+
 function tx(store, mode='readonly'){ return dbInstance.transaction(store, mode).objectStore(store); }
 function reqP(request){ return new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
 const DB = {
-  async all(store){ return reqP(tx(store).getAll()); },
-  async get(store, id){ return reqP(tx(store).get(id)); },
-  async put(store, obj){ return reqP(tx(store,'readwrite').put(obj)); },
-  async delete(store, id){ return reqP(tx(store,'readwrite').delete(id)); },
-  async byIndex(store, index, value){ return reqP(tx(store).index(index).getAll(value)); },
+  async all(store){ await ensureDB(); return reqP(tx(store).getAll()); },
+  async get(store, id){ await ensureDB(); return reqP(tx(store).get(id)); },
+  async put(store, obj){ await ensureDB(); return reqP(tx(store,'readwrite').put(obj)); },
+  async delete(store, id){ await ensureDB(); return reqP(tx(store,'readwrite').delete(id)); },
+  async byIndex(store, index, value){ await ensureDB(); return reqP(tx(store).index(index).getAll(value)); },
 };
 
 /* ============================ STATE ============================ */
@@ -538,11 +555,23 @@ const STATE = {
 
 /* ============================ LOGIN UI ============================ */
 let loginMode = 'online';
+let _dbReady = false;
+$('#loginSubmitBtn').disabled = true;
+$('#loginSubmitBtn').textContent = 'Initialisation...';
+dbReadyPromise.then(() => {
+  _dbReady = true;
+  $('#loginSubmitBtn').disabled = false;
+  $('#loginSubmitBtn').textContent = loginMode === 'online' ? 'Se connecter' : 'Connexion locale';
+}).catch((err) => {
+  console.error('IndexedDB init error', err);
+  showLoginError("Le stockage local n'a pas pu être initialisé sur cet appareil. Fermez les autres onglets de l'application, puis rechargez la page.");
+});
+
 function setLoginMode(mode){
   loginMode = mode;
   $('#tabOnline').classList.toggle('active', mode==='online');
   $('#tabLocal').classList.toggle('active', mode==='local');
-  $('#loginSubmitBtn').textContent = mode==='online' ? 'Se connecter' : 'Connexion locale';
+  $('#loginSubmitBtn').textContent = _dbReady ? (mode==='online' ? 'Se connecter' : 'Connexion locale') : 'Initialisation...';
   $('#loginHint').textContent = mode==='online'
     ? "La première connexion nécessite internet — elle vérifie votre compte et votre commerce, puis enregistre un accès local chiffré sur cet appareil pour les prochaines connexions hors-ligne."
     : "Connexion locale : utilise l'accès enregistré sur cet appareil lors de votre dernière connexion en ligne. Fonctionne sans internet.";
@@ -553,6 +582,7 @@ function hideLoginError(){ $('#loginError').classList.add('hidden'); }
 
 async function handleLoginSubmit(e){
   e.preventDefault();
+  if(!_dbReady){ showLoginError("Initialisation en cours, veuillez patienter quelques secondes puis réessayer."); return false; }
   const email = $('#loginEmail').value.trim().toLowerCase();
   const password = $('#loginPassword').value;
   hideLoginError();
@@ -2030,7 +2060,7 @@ function showApproDetail(id){
 
 /* ============================ BOOT ============================ */
 (async function boot(){
-  dbInstance = await openDB();
+  try{ await dbReadyPromise; }catch(e){ return; } // erreur déjà affichée à l'utilisateur
   if('serviceWorker' in navigator){ navigator.serviceWorker.register('./sw.js').catch(()=>{}); }
   try{
     const all = await DB.all('localAuth');
