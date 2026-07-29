@@ -103,6 +103,17 @@ main{flex:1;padding:16px;padding-bottom:88px;max-width:900px;width:100%;margin:0
 .badge-readonly{background:var(--accent-2-dim);color:var(--accent-2);border-color:transparent;}
 .badge-mine{background:var(--accent-dim);color:var(--accent);border-color:transparent;}
 
+/* PRINT MODE / TOGGLE */
+.print-mode-tabs{display:flex;flex-direction:column;gap:8px;}
+.print-mode-tabs button{text-align:left;background:var(--surface-2);border:1.5px solid var(--line);color:var(--text-dim);padding:12px 14px;border-radius:10px;font-size:13.5px;font-weight:600;transition:border-color .12s,color .12s;}
+.print-mode-tabs button.active{border-color:var(--accent);color:var(--text);background:rgba(0,231,160,.08);}
+.toggle-switch{position:relative;display:inline-block;width:46px;height:26px;flex:0 0 auto;}
+.toggle-switch input{opacity:0;width:0;height:0;}
+.toggle-slider{position:absolute;cursor:pointer;inset:0;background:var(--surface-3);border:1px solid var(--line);border-radius:999px;transition:.15s;}
+.toggle-slider::before{content:"";position:absolute;height:18px;width:18px;left:3px;top:3px;background:var(--text-dim);border-radius:50%;transition:.15s;}
+.toggle-switch input:checked + .toggle-slider{background:var(--accent-dim);border-color:var(--accent);}
+.toggle-switch input:checked + .toggle-slider::before{transform:translateX(20px);background:var(--accent);}
+
 /* KPI */
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;}
 .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px;}
@@ -301,6 +312,67 @@ tr:last-child td{border-bottom:none;}
         <tbody id="approBody"></tbody></table>
       </div>
     </section>
+
+    <!-- PARAMÈTRES / IMPRESSION -->
+    <section id="route-parametres" class="section hidden">
+      <div class="section-head"><h2>Réglages</h2></div>
+
+      <div class="card">
+        <h3 style="font-size:15px;margin-bottom:4px;">🖨 Impression des reçus</h3>
+        <p class="faint" style="font-size:12.5px;margin:0 0 16px;">Choisissez comment cet appareil imprime les reçus. Le Mode 2 permet à une tablette d'envoyer l'impression vers un Sunmi V2 distant, sans app supplémentaire.</p>
+
+        <label>Mode d'impression sur cet appareil</label>
+        <div class="print-mode-tabs" id="printModeTabs">
+          <button type="button" data-mode="local" onclick="setPrintMode('local')">📟 Mode 1 — RawBT local</button>
+          <button type="button" data-mode="distant" onclick="setPrintMode('distant')">📶 Mode 2 — Sunmi V2 distant</button>
+        </div>
+        <p class="faint" style="font-size:11.5px;margin-top:8px;">
+          <b>Mode 1</b> : à utiliser si RawBT est installé sur CET appareil (typiquement sur le Sunmi V2 lui-même).<br>
+          <b>Mode 2</b> : à utiliser sur une tablette qui n'a pas RawBT — l'impression est envoyée au Sunmi V2 enregistré ci-dessous.
+        </p>
+
+        <div id="distantStatusBox" class="hidden" style="margin-top:16px;padding:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="dot" id="stationDot"></span>
+              <span id="stationStatusText" style="font-size:13px;font-weight:600;">—</span>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="refreshStationStatus()">🔄 Actualiser</button>
+          </div>
+          <div class="faint" id="stationMeta" style="font-size:11.5px;margin-top:6px;">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="font-size:15px;margin-bottom:4px;">📟 Cet appareil est le Sunmi V2 imprimante</h3>
+        <p class="faint" style="font-size:12.5px;margin:0 0 14px;">Activez ceci UNIQUEMENT sur le Sunmi V2 où RawBT est installé. L'appareil restera à l'écoute des commandes d'impression envoyées par les tablettes en Mode 2, et devra rester ouvert sur cette page.</p>
+
+        <div class="field">
+          <label>Nom de ce poste</label>
+          <input type="text" id="stationNameInput" placeholder="Ex: Caisse principale — Sunmi V2">
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="dot" id="stationSelfDot"></span>
+            <span id="stationSelfText" style="font-size:13px;font-weight:600;">Écoute désactivée</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="stationEnableToggle" onchange="onStationToggle(this.checked)">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="faint" id="stationJobsInfo" style="font-size:11.5px;margin-top:10px;">—</div>
+
+        <div id="kioskBox" class="hidden" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+            <div class="faint" id="kioskStatusText" style="font-size:11.5px;">—</div>
+            <button class="btn btn-ghost btn-sm" onclick="requestKioskFullscreen()">🖥 Plein écran</button>
+          </div>
+          <p class="faint" style="font-size:11px;margin:8px 0 0;">Le plein écran doit être relancé manuellement après un redémarrage de l'appareil ou de l'app (limite du navigateur : le geste utilisateur est requis).</p>
+        </div>
+      </div>
+    </section>
   </main>
 
   <div class="cart-bar hidden" id="cartBar" onclick="openCartModal()">
@@ -314,6 +386,7 @@ tr:last-child td{border-bottom:none;}
     <button class="nav-btn" data-route="historique" onclick="renderRoute('historique')"><span class="nav-ic">🧾</span>Historique</button>
     <button class="nav-btn" data-route="rapports" onclick="renderRoute('rapports')"><span class="nav-ic">📊</span>Rapports</button>
     <button class="nav-btn" data-route="appro" onclick="renderRoute('appro')"><span class="nav-ic">📦</span>Appro</button>
+    <button class="nav-btn" data-route="parametres" onclick="renderRoute('parametres')"><span class="nav-ic">⚙️</span>Réglages</button>
   </nav>
 </div>
 
@@ -613,6 +686,7 @@ async function startApp(session, isFreshOnlineLogin){
       await flushPendingQueue();
       toast('🔄 Synchronisation initiale en cours...', 'ok');
       await forceSync();
+      if(isStationEnabled()){ await enableStationMode(session.businessId, getStationName()); }
     }catch(e){ console.warn('Firebase init différé', e); }
   }
 }
@@ -879,6 +953,7 @@ function renderRoute(route){
   if(route === 'historique') renderHistorique();
   if(route === 'rapports') renderRapports();
   if(route === 'appro') renderAppro();
+  if(route === 'parametres') renderParametres();
 }
 
 /* ============================ VENTE : GRILLE PRODUITS ============================ */
@@ -1467,12 +1542,248 @@ let _lastVente = null;
 function printReceiptNow(){
   if(_receiptPrinted || !_lastVente) return;
   _receiptPrinted = true;
-  sendToRawBT(buildEscPosReceipt(_lastVente));
+  const escpos = buildEscPosReceipt(_lastVente);
+  if(getPrintMode() === 'distant'){
+    sendPrintJobToStation(escpos);
+  } else {
+    sendToRawBT(escpos);
+  }
   closeModal();
 }
 function printReceiptSystemFallback(){
   window.print();
   closeModal();
+}
+
+/* ============ MODE 2 : IMPRESSION DISTANTE VERS UN SUNMI V2 (relais Firestore, 100% web) ============
+   Principe :
+   - Le Sunmi V2 (Mode "poste imprimante") reste ouvert sur cette page et écoute en temps réel
+     la collection Firestore `printJobs`. Quand un job arrive, il exécute sendToRawBT() localement
+     (intent:// fonctionne car RawBT est installé sur CE même appareil).
+   - Une tablette en "Mode 2" ne déclenche jamais intent:// elle-même : elle dépose un document
+     dans `printJobs`, ciblé par businessId (un seul Sunmi V2 fixe par commerce). Le job reste en
+     file d'attente jusqu'à ce que le Sunmi V2 le récupère, même s'il est hors-ligne au moment de l'envoi.
+   Aucune app Android native n'est nécessaire : uniquement le SDK Firebase déjà chargé dans la page.
+*/
+const STATION_OFFLINE_AFTER_MS = 45000; // au-delà, on considère le poste hors-ligne
+let _stationDocUnsub = null;
+let _printJobsUnsub = null;
+let _stationHeartbeatTimer = null;
+
+function getDeviceId(){
+  let id = localStorage.getItem('jc_device_id');
+  if(!id){ id = uid(); localStorage.setItem('jc_device_id', id); }
+  return id;
+}
+function getPrintMode(){ return localStorage.getItem('jc_print_mode') || 'local'; }
+function setPrintMode(mode){
+  localStorage.setItem('jc_print_mode', mode);
+  renderParametres();
+  toast(mode === 'distant' ? '📶 Mode 2 activé — les reçus seront envoyés au Sunmi V2 distant.' : '📟 Mode 1 activé — impression RawBT locale.', 'ok');
+}
+function isStationEnabled(){ return localStorage.getItem('jc_station_enabled') === '1'; }
+function getStationName(){ return localStorage.getItem('jc_station_name') || 'Sunmi V2'; }
+
+/* ---- Wake Lock + Plein écran (mode kiosque) : garde le Sunmi V2 allumé et visible ---- */
+let _wakeLock = null;
+async function acquireWakeLock(){
+  if(!('wakeLock' in navigator)) return;
+  try{
+    _wakeLock = await navigator.wakeLock.request('screen');
+    _wakeLock.addEventListener('release', () => { _wakeLock = null; });
+  }catch(e){ console.warn('Wake Lock refusé', e); }
+}
+async function releaseWakeLock(){
+  if(_wakeLock){ try{ await _wakeLock.release(); }catch(e){} _wakeLock = null; }
+}
+// Le Wake Lock est automatiquement relâché par le navigateur quand l'onglet passe en arrière-plan ;
+// on le redemande dès que la page redevient visible, tant que le mode "poste imprimante" est actif.
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible' && isStationEnabled()) acquireWakeLock();
+});
+document.addEventListener('fullscreenchange', () => { if(STATE.currentRoute === 'parametres') renderParametres(); });
+
+function requestKioskFullscreen(){
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+  if(req){ req.call(el).catch(e => console.warn('Plein écran refusé', e)); }
+}
+function exitKioskFullscreen(){
+  const exit = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+  if(document.fullscreenElement && exit){ exit.call(document).catch(()=>{}); }
+}
+function isFullscreenActive(){ return !!document.fullscreenElement; }
+
+/* ---- Enregistrement du Sunmi V2 comme poste imprimante (un seul par commerce) ---- */
+async function onStationToggle(checked){
+  const bizId = STATE.session?.businessId;
+  if(!bizId){ toast('Connexion requise.', 'err'); return; }
+  if(checked){
+    // Appelé en tout premier, synchrone, pour conserver le geste utilisateur requis par l'API Fullscreen
+    requestKioskFullscreen();
+    const nomInput = ($('#stationNameInput').value || '').trim();
+    const nom = nomInput || 'Sunmi V2';
+    localStorage.setItem('jc_station_enabled', '1');
+    localStorage.setItem('jc_station_name', nom);
+    await enableStationMode(bizId, nom);
+    await acquireWakeLock();
+  } else {
+    localStorage.setItem('jc_station_enabled', '0');
+    await disableStationMode(bizId);
+    await releaseWakeLock();
+    exitKioskFullscreen();
+  }
+  renderParametres();
+}
+
+async function enableStationMode(bizId, nom){
+  if(!fsDB){ toast("Connexion internet requise pour activer l'écoute (première activation).", 'warn'); return; }
+  const deviceId = getDeviceId();
+  const publishHeartbeat = async () => {
+    try{
+      await fsDB.collection('printStations').doc(bizId).set({
+        businessId: bizId, deviceId, nom, active: true, lastSeen: nowISO()
+      }, {merge:true});
+    }catch(e){ console.warn('heartbeat impression échoué', e); }
+  };
+  await publishHeartbeat();
+  clearInterval(_stationHeartbeatTimer);
+  _stationHeartbeatTimer = setInterval(publishHeartbeat, 15000);
+  attachPrintJobsListener(bizId, deviceId);
+  await acquireWakeLock();
+  toast(`🖨 Ce Sunmi V2 est maintenant à l'écoute des impressions (Mode 2).`, 'ok');
+}
+
+async function disableStationMode(bizId){
+  clearInterval(_stationHeartbeatTimer);
+  _stationHeartbeatTimer = null;
+  if(_printJobsUnsub){ _printJobsUnsub(); _printJobsUnsub = null; }
+  if(fsDB && bizId){
+    try{ await fsDB.collection('printStations').doc(bizId).set({active:false, lastSeen: nowISO()}, {merge:true}); }catch(e){}
+  }
+  await releaseWakeLock();
+  toast('Écoute des impressions désactivée sur cet appareil.', 'ok');
+}
+
+
+/* ---- Côté poste imprimante : écoute des jobs en attente et impression locale via RawBT ---- */
+function attachPrintJobsListener(bizId, myDeviceId){
+  if(_printJobsUnsub) _printJobsUnsub();
+  _printJobsUnsub = fsDB.collection('printJobs')
+    .where('businessId','==',bizId)
+    .where('status','==','pending')
+    .onSnapshot(async (snap) => {
+      for(const change of snap.docChanges()){
+        if(change.type === 'removed') continue;
+        const job = change.doc.data();
+        try{
+          const bytes = Uint8Array.from(atob(job.escposB64), c => c.charCodeAt(0));
+          const text = new TextDecoder('latin1').decode(bytes);
+          sendToRawBT(text);
+          await fsDB.collection('printJobs').doc(job.id).set({status:'printed', printedAt: nowISO(), printedBy: myDeviceId}, {merge:true});
+          toast(`🖨 Reçu ${job.numero||''} imprimé depuis la tablette ✓`, 'ok');
+        }catch(e){
+          console.warn('Échec impression job', job.id, e);
+          try{ await fsDB.collection('printJobs').doc(job.id).set({status:'failed', error:String(e)}, {merge:true}); }catch(e2){}
+        }
+      }
+      const jobsInfo = $('#stationJobsInfo');
+      if(jobsInfo) jobsInfo.textContent = `File d'attente : ${snap.size} job(s) en attente.`;
+    }, (err) => console.warn('Écoute printJobs échouée', err));
+}
+
+/* ---- Côté tablette (Mode 2) : dépôt d'un job d'impression, ciblé sur le Sunmi V2 de la commerce ---- */
+async function sendPrintJobToStation(escposText){
+  const bizId = STATE.session?.businessId;
+  if(!bizId){ toast('Connexion requise pour le Mode 2.', 'err'); return; }
+  if(!fsDB || !navigator.onLine){
+    toast("Pas de connexion internet — impossible d'envoyer au Sunmi V2 pour le moment. Réessayez depuis « Réimprimer ».", 'err');
+    _receiptPrinted = false; // permettre une réimpression manuelle
+    return;
+  }
+  const bytes = new TextEncoder().encode(toPrinterAscii(escposText));
+  const escposB64 = bytesToBase64(bytes);
+  const jobId = uid();
+  const job = {
+    id: jobId, businessId: bizId, escposB64, status: 'pending',
+    numero: _lastVente ? _lastVente.numero : '', createdAt: nowISO(), createdBy: STATE.session.nom, createdDevice: getDeviceId()
+  };
+  try{
+    await fsDB.collection('printJobs').doc(jobId).set(job);
+  }catch(e){
+    toast("Échec de l'envoi vers le Sunmi V2 : " + e.message, 'err');
+    _receiptPrinted = false;
+    return;
+  }
+
+  const station = await getStationStatus(bizId);
+  if(station.online){
+    toast(`📶 Envoyé à « ${station.nom} » — impression en cours...`, 'ok');
+  } else {
+    toast(`⚠️ « ${station ? station.nom : 'Le Sunmi V2'} » semble hors-ligne. La commande reste en file d'attente et s'imprimera dès sa reconnexion.`, 'warn');
+  }
+
+  // Suivi ponctuel du job pour confirmer l'impression réelle une fois le poste reconnecté
+  const jobUnsub = fsDB.collection('printJobs').doc(jobId).onSnapshot((doc) => {
+    const d = doc.data();
+    if(d && d.status === 'printed'){ toast('✓ Reçu imprimé sur le Sunmi V2.', 'ok'); jobUnsub(); }
+    if(d && d.status === 'failed'){ toast('❌ Échec impression sur le Sunmi V2.', 'err'); jobUnsub(); }
+  });
+  setTimeout(() => { try{ jobUnsub(); }catch(e){} }, 5*60*1000); // on arrête d'écouter après 5 min
+}
+
+/* ---- Statut du poste imprimante (en ligne / hors-ligne) ---- */
+async function getStationStatus(bizId){
+  if(!fsDB) return {online:false, nom:getStationName()};
+  try{
+    const doc = await fsDB.collection('printStations').doc(bizId).get();
+    if(!doc.exists) return {online:false, nom:null};
+    const d = doc.data();
+    const lastSeenMs = d.lastSeen ? new Date(d.lastSeen).getTime() : 0;
+    const online = d.active && (Date.now() - lastSeenMs) < STATION_OFFLINE_AFTER_MS;
+    return {online, nom:d.nom, lastSeen:d.lastSeen};
+  }catch(e){ return {online:false, nom:null}; }
+}
+async function refreshStationStatus(){
+  const bizId = STATE.session?.businessId;
+  if(!bizId) return;
+  const box = $('#distantStatusBox');
+  const dot = $('#stationDot'), txt = $('#stationStatusText'), meta = $('#stationMeta');
+  if(!box) return;
+  txt.textContent = 'Vérification...';
+  const s = await getStationStatus(bizId);
+  dot.className = 'dot ' + (s.online ? 'online' : 'offline');
+  if(!s.nom){
+    txt.textContent = 'Aucun Sunmi V2 enregistré';
+    meta.textContent = "Activez l'écoute sur le Sunmi V2 dans « Réglages » de cet appareil-là.";
+  } else {
+    txt.textContent = s.online ? `${s.nom} — en ligne` : `${s.nom} — hors-ligne`;
+    meta.textContent = s.lastSeen ? `Dernier contact : ${fmtDateTime(s.lastSeen)}` : '—';
+  }
+}
+
+/* ---- Rendu de l'onglet Réglages ---- */
+function renderParametres(){
+  const mode = getPrintMode();
+  $$('#printModeTabs button').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  $('#distantStatusBox').classList.toggle('hidden', mode !== 'distant');
+  if(mode === 'distant') refreshStationStatus();
+
+  const enabled = isStationEnabled();
+  $('#stationEnableToggle').checked = enabled;
+  $('#stationNameInput').value = getStationName();
+  $('#stationSelfDot').className = 'dot ' + (enabled ? 'online' : '');
+  $('#stationSelfText').textContent = enabled ? `Écoute active — « ${getStationName()} »` : 'Écoute désactivée';
+  $('#stationJobsInfo').textContent = enabled ? "En attente de reçus envoyés par les tablettes..." : '—';
+
+  const kioskBox = $('#kioskBox');
+  kioskBox.classList.toggle('hidden', !enabled);
+  if(enabled){
+    const wlSupported = 'wakeLock' in navigator;
+    const wl = wlSupported ? (_wakeLock ? 'actif ✓' : 'non actif — appuyez sur « Plein écran » ou touchez l\'écran') : 'non supporté par ce navigateur';
+    const fs = isFullscreenActive() ? 'plein écran actif ✓' : 'écran normal';
+    $('#kioskStatusText').textContent = `Wake Lock : ${wl}. Affichage : ${fs}.`;
+  }
 }
 
 function showReceipt(v){

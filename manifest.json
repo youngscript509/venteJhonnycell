@@ -1,19 +1,26 @@
 {
-  "name": "JhonnyCell Vente",
-  "short_name": "JC Vente",
-  "description": "Poste de vente JhonnyCell — Ventes, Rapports, Approvisionnements",
+  "name": "JhonnyCell Vente — Poste de vente",
+  "short_name": "JhonnyCell",
+  "description": "Application de point de vente JhonnyCell — gestion des ventes, stock et impression de reçus.",
+  "id": "/",
   "start_url": "./index.html",
   "scope": "./",
-  "display": "standalone",
+  "lang": "fr",
+  "dir": "ltr",
+
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone", "minimal-ui", "browser"],
+  "orientation": "any",
+
   "background_color": "#0B1420",
   "theme_color": "#0B1420",
-  "orientation": "any",
+
+  "categories": ["business", "finance", "productivity"],
+
   "icons": [
-    {
-      "src": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='36' fill='%230B1420'/><text x='96' y='118' font-family='Arial' font-weight='900' font-size='84' fill='%2300E7A0' text-anchor='middle'>JV</text></svg>",
-      "sizes": "192x192",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    }
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-192-maskable.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
