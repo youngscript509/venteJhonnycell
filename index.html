@@ -1217,10 +1217,12 @@ function renderStock(){
 }
 function setStockCat(c){ STATE.stockActiveCat = c; renderStock(); }
 
-/* Un téléphone vendu = un IMEI. On détecte la catégorie (accents/majuscules ignorés) pour déclencher la saisie obligatoire. */
+/* Un téléphone vendu = un IMEI. On détecte la catégorie (accents/majuscules ignorés) pour déclencher la saisie obligatoire.
+   IMPORTANT : correspondance EXACTE uniquement — on ne veut pas capturer des catégories comme
+   "Tapa Téléphone", "Écran Téléphone", "Accessoire Téléphone", etc. qui contiennent juste le mot "téléphone". */
 function isPhoneCategory(nom){
   const n = (nom||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
-  return n === 'telephone' || n === 'telephones' || n.includes('telephone') || n.includes('smartphone');
+  return n === 'telephone' || n === 'telephones' || n === 'smartphone' || n === 'smartphones';
 }
 
 /* Ne garde que des chiffres (IMEI = 14 à 17 chiffres selon le format), retire tout espace/symbole nuisible pour le stockage et l'impression thermique. */
