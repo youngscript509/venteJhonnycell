@@ -1,4 +1,4 @@
-const CACHE = 'jhonnycell-vente-v6.6';
+const CACHE = 'jhonnycell-vente-v6.7';
 const ASSETS = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', (e) => {
