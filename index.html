@@ -425,8 +425,43 @@ function isUSDPayment(m){ return USD_PAYMENT_METHODS.includes(m); }
 const $ = (sel, root=document) => root.querySelector(sel);
 const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now() + '-' + Math.random().toString(16).slice(2));
-const nowISO = () => new Date().toISOString();
-const todayStr = () => new Date().toISOString().slice(0,10);
+
+/* ---- Horloge fiable ------------------------------------------------------
+   Sur les tablettes/Sunmi, l'horloge système peut être fausse (pile morte,
+   pas de SIM, "Date et heure automatiques" désactivé, réglage manuel erroné,
+   etc.). Comme toutes les dates de l'app (vente, reçu, sync) sont générées à
+   partir de l'horloge de l'appareil, un décalage se retrouve imprimé sur la
+   facture ET reste figé pour toujours dans l'enregistrement de la vente.
+   On corrige ça en comparant régulièrement l'horloge locale à l'en-tête
+   HTTP "Date" renvoyé par notre propre serveur (fiable, pas besoin de droits
+   Firestore particuliers), et on applique le décalage mesuré (persisté sur
+   l'appareil) à toutes les dates générées par l'app, même hors-ligne. ---- */
+let CLOCK_OFFSET_MS = Number(localStorage.getItem('jc_clock_offset_ms') || 0) || 0;
+const correctedNowMs = () => Date.now() + CLOCK_OFFSET_MS;
+const nowISO = () => new Date(correctedNowMs()).toISOString();
+const todayStr = () => new Date(correctedNowMs()).toISOString().slice(0,10);
+
+async function syncClockOffset(){
+  if(!navigator.onLine) return;
+  try{
+    const t0 = Date.now();
+    const res = await fetch(location.origin + location.pathname + '?_t=' + t0, { method:'HEAD', cache:'no-store' });
+    const t1 = Date.now();
+    const dateHeader = res.headers.get('date');
+    if(!dateHeader) return;
+    const serverMs = new Date(dateHeader).getTime();
+    if(isNaN(serverMs)) return;
+    const rtt = t1 - t0;
+    const estimatedServerNow = serverMs + rtt / 2; // compense grossièrement la latence réseau
+    const offset = estimatedServerNow - t1;
+    const prevOffset = CLOCK_OFFSET_MS;
+    CLOCK_OFFSET_MS = offset;
+    localStorage.setItem('jc_clock_offset_ms', String(Math.round(offset)));
+    if(Math.abs(offset) > 60 * 60 * 1000 && Math.abs(offset - prevOffset) > 60 * 60 * 1000){
+      toast("⚠️ L'horloge de cet appareil est incorrecte — les dates des factures sont corrigées automatiquement. Vérifiez « Date et heure » dans les réglages Android.", 'warn');
+    }
+  }catch(e){ console.warn('Synchronisation horloge échouée', e); }
+}
 const fmtMoney = (n) => (Number(n)||0).toLocaleString('fr-HT', {minimumFractionDigits:0, maximumFractionDigits:2}) + ' $HT';
 const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString('fr-FR', {day:'2-digit',month:'short',year:'numeric'}); } catch(e){ return iso; } };
 const fmtDateTime = (iso) => { try { return new Date(iso).toLocaleString('fr-FR', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(e){ return iso; } };
@@ -708,6 +743,7 @@ async function startApp(session, isFreshOnlineLogin){
   updateSyncUI();
 
   if(navigator.onLine){
+    syncClockOffset();
     try{
       if(!isFreshOnlineLogin){ firebase.initializeApp(FIREBASE_CONFIG); }
       fsDB = firebase.firestore();
@@ -941,6 +977,7 @@ async function forceSync(){
 
 window.addEventListener('online', async () => {
   STATE.online = true;
+  await syncClockOffset();
   if(STATE.session){
     try{
       if(!fsDB){ fsDB = firebase.firestore(); attachListeners(STATE.session.businessId); }
@@ -2068,7 +2105,9 @@ function showApproDetail(id){
     const all = await DB.all('localAuth');
     if(all.length){ setLoginMode('local'); $('#loginEmail').value = all[0].email; }
   }catch(e){}
+  syncClockOffset(); // corrige l'horloge dès le démarrage, avant même la connexion
   setInterval(updateSyncUI, 8000);
+  setInterval(syncClockOffset, 15 * 60000); // re-vérifie régulièrement pendant que l'app reste ouverte
 })();
 </script>
 </body>
