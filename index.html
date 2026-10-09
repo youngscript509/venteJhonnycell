@@ -317,6 +317,8 @@ tr:last-child td{border-bottom:none;}
     <section id="route-parametres" class="section hidden">
       <div class="section-head"><h2>Réglages</h2></div>
 
+      <div class="card" id="printCfgBox"></div>
+
       <div class="card">
         <h3 style="font-size:15px;margin-bottom:4px;">🖨 Impression des reçus</h3>
         <p class="faint" style="font-size:12.5px;margin:0 0 16px;">Choisissez comment cet appareil imprime les reçus. Le Mode 2 permet à une tablette d'envoyer l'impression vers un Sunmi V2 distant, sans app supplémentaire.</p>
@@ -1513,44 +1515,26 @@ const RECEIPT_INFO = {
   adresse: 'Rue Gaillard, entrée en face Ti Norva'
 };
 
-function buildEscPosReceipt(v){
-  const biz = STATE.session.businessNom || '';
-  let s = '';
-  s += ESC + '@';
-  s += ESC + 'a' + '\x01';
-  s += ESC + 'E' + '\x01' + 'JhonnyCell' + ESC + 'E' + '\x00' + '\n';
-  s += biz + '\n';
-  s += 'Tel: ' + RECEIPT_INFO.phone + '\n';
-  s += 'Email: ' + RECEIPT_INFO.email + '\n';
-  s += RECEIPT_INFO.adresse + '\n';
-  s += fmtDateTime(v.date) + '\n';
-  s += '--------------------------------\n';
-  s += ESC + 'a' + '\x00';
-  s += 'Recu N ' + v.numero + '\n';
-  if(v.client) s += 'Client: ' + v.client + '\n';
-  s += 'Vendeur: ' + v.vendeurNom + '\n';
-  if(v.modifiedBy) s += 'Modifiee par ' + v.modifiedBy + ' le ' + fmtDateTime(v.modifiedAt) + '\n';
-  s += '--------------------------------\n';
-  v.lignes.forEach(l => {
-    s += l.categorie + ' - ' + l.nom + '\n';
-    if(l.imei) s += '  IMEI: ' + l.imei + '\n';
-    s += `  ${l.quantite} x ${fmtMoney(l.prixUnitaire)}`.padEnd(24) + fmtMoney(l.total) + '\n';
+function buildEscPosReceipt(v,cols){
+  const c=pcfg(); cols=cols||(c.width===80?48:32);
+  const L=(l,r)=>{l=String(l);r=String(r);const w=Math.max(1,cols-r.length);return l.padEnd(w).slice(0,w)+r;};
+  const hr='-'.repeat(cols)+'\n', B=on=>ESC+'E'+(on?'\x01':'\x00');
+  let s=ESC+'@'+(c.enc==='cp858'?ESC+'t'+'\x13':'')+(c.drawer?ESC+'p'+'\x00\x19\x19':'');
+  s+=ESC+'a\x01'+B(1)+'JhonnyCell'+B(0)+'\n'+(STATE.session.businessNom||'')+'\n';
+  s+='Tel: '+RECEIPT_INFO.phone.trim()+'\n'+'Email: '+RECEIPT_INFO.email+'\n'+RECEIPT_INFO.adresse+'\n'+fmtDateTime(v.date)+'\n'+hr+ESC+'a\x00';
+  s+='Recu N '+v.numero+'\n'+(v.client?'Client: '+v.client+'\n':'')+'Vendeur: '+v.vendeurNom+'\n';
+  if(v.modifiedBy) s+='Modifiee par '+v.modifiedBy+' le '+fmtDateTime(v.modifiedAt)+'\n';
+  s+=hr;
+  v.lignes.forEach(l=>{
+    s+=l.categorie+' - '+l.nom+'\n'+(l.imei?'  IMEI: '+l.imei+'\n':'');
+    s+=L('  '+l.quantite+' x '+fmtMoney(l.prixUnitaire),fmtMoney(l.total))+'\n';
   });
-  s += '--------------------------------\n';
-  s += ESC + 'E' + '\x01';
-  if(v.rabais>0) s += `Sous-total`.padEnd(20) + fmtMoney(v.totalBrut) + '\n' + ESC+'E'+'\x00' + `Rabais`.padEnd(20) + '-' + fmtMoney(v.rabais) + '\n' + ESC+'E'+'\x01';
-  s += `TOTAL`.padEnd(20) + fmtMoney(v.total) + '\n';
-  s += ESC + 'E' + '\x00';
-  if(v.solde > 0){
-    s += `Paye`.padEnd(20) + fmtMoney(v.montantPaye) + '\n';
-    s += ESC + 'E' + '\x01' + `SOLDE RESTANT`.padEnd(20) + fmtMoney(v.solde) + '\n' + ESC + 'E' + '\x00';
-  }
-  s += 'Paiement: ' + v.paymentMeth + (v.tauxUSD ? ` (taux ${v.tauxUSD})` : '') + '\n';
-  s += '--------------------------------\n';
-  s += ESC + 'a' + '\x01';
-  s += 'Merci de votre confiance !\n';
-  s += '\n\n\n';
-  s += GS + 'V' + '\x00';
+  s+=hr;
+  if(v.rabais>0) s+=L('Sous-total',fmtMoney(v.totalBrut))+'\n'+L('Rabais','-'+fmtMoney(v.rabais))+'\n';
+  s+=B(1)+L('TOTAL',fmtMoney(v.total))+'\n'+B(0);
+  if(v.solde>0) s+=L('Paye',fmtMoney(v.montantPaye))+'\n'+B(1)+L('SOLDE RESTANT',fmtMoney(v.solde))+'\n'+B(0);
+  s+='Paiement: '+v.paymentMeth+(v.tauxUSD?' (taux '+v.tauxUSD+')':'')+'\n'+hr;
+  s+=ESC+'a\x01'+'Merci de votre confiance !\n\n\n\n'+(c.cut?GS+'V'+'\x00':'');
   return s;
 }
 
@@ -1608,21 +1592,136 @@ function buildReceiptThermalHTML(v){
 
 let _receiptPrinted = false;
 let _lastVente = null;
-function printReceiptNow(){
+
+/* ============ IMPRESSION UNIVERSELLE (PC / POS / mobile / tablette) ============
+   Mode "auto" : choisit la meilleure méthode selon l'appareil.
+   1) relais Firestore si Mode 2 actif  2) imprimante directe USB / Série / Bluetooth déjà connectée (PC, Android Chrome)
+   3) RawBT (Android / Sunmi)  4) impression système (AirPrint, PDF, imprimante Windows) avec @page 58/80 mm */
+const PRINT_DEFAULT={method:'auto',width:58,auto:true,cut:true,drawer:false,copies:1,enc:'ascii'};
+function pcfg(){ try{ return Object.assign({},PRINT_DEFAULT,JSON.parse(localStorage.getItem('jc_print_cfg')||'{}')); }catch(e){ return {...PRINT_DEFAULT}; } }
+function setPcfg(k,v){
+  if(k==='width'||k==='copies') v=+v;
+  const c=pcfg(); c[k]=v; localStorage.setItem('jc_print_cfg',JSON.stringify(c));
+  if(k==='method'&&v!=='auto') localStorage.setItem('jc_print_mode',v==='relay'?'distant':'local');
+  renderParametres();
+}
+const ENV={android:/Android/i.test(navigator.userAgent),usb:'usb' in navigator,serial:'serial' in navigator,bt:'bluetooth' in navigator};
+const _link={usb:null,serial:null,bt:null};
+const CP858={'é':130,'è':138,'ê':136,'ë':137,'à':133,'â':131,'ä':132,'ç':135,'î':140,'ï':139,'ô':147,'ö':148,'ù':151,'û':150,'ü':129,'É':144,'È':212,'À':183,'Â':182,'Ç':128,'Ê':210,'Ë':211,'Î':215,'Ï':216,'Ô':226,'Ù':235,'Û':234,'Ü':154,'€':213,'°':248};
+function encodeText(s,mode){
+  if(mode!=='cp858') return new TextEncoder().encode(toPrinterAscii(s));
+  s=s.normalize('NFC').replace(/[\u00A0\u202F]/g,' ').replace(/[\u2018\u2019]/g,"'").replace(/[\u201C\u201D]/g,'"').replace(/[\u2013\u2014]/g,'-');
+  const o=[]; for(const ch of s){ const k=ch.charCodeAt(0); if(k<128) o.push(k); else if(CP858[ch]!=null) o.push(CP858[ch]); }
+  return Uint8Array.from(o);
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+/* ---- Connexions directes ---- */
+async function usbOpen(dev){
+  await dev.open(); if(!dev.configuration) await dev.selectConfiguration(1);
+  for(const i of dev.configuration.interfaces) for(const a of i.alternates){
+    const ep=a.endpoints.find(e=>e.direction==='out'&&e.type==='bulk');
+    if(ep){ await dev.claimInterface(i.interfaceNumber); _link.usb={dev,ep:ep.endpointNumber}; return; }
+  }
+  throw new Error('endpoint USB introuvable (sous Windows, installer le pilote WinUSB via Zadig, ou utiliser Série/COM)');
+}
+async function serOpen(p){ try{ await p.open({baudRate:9600}); }catch(e){ if(e.name!=='InvalidStateError') throw e; } _link.serial=p; }
+const BT_SERVICES=['000018f0-0000-1000-8000-00805f9b34fb','e7810a71-73ae-499d-8c15-faa9aef0c3f2','49535343-fe7d-4ae5-8fa9-9fafd205e455'];
+async function btOpen(d){
+  const srv=await d.gatt.connect();
+  for(const s of await srv.getPrimaryServices()) for(const ch of await s.getCharacteristics())
+    if(ch.properties.write||ch.properties.writeWithoutResponse){ _link.bt={dev:d,ch}; return; }
+  throw new Error('aucune caractéristique d\'écriture BLE');
+}
+async function connectPrinter(k){
+  try{
+    if(k==='usb') await usbOpen(await navigator.usb.requestDevice({filters:[{classCode:7},{classCode:255}]}));
+    if(k==='serial') await serOpen(await navigator.serial.requestPort());
+    if(k==='bt') await btOpen(await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:BT_SERVICES}));
+    toast('✓ Imprimante connectée','ok');
+  }catch(e){ if(e.name!=='NotFoundError') toast('Connexion impossible : '+e.message); }
+  renderParametres();
+}
+(async()=>{ /* reconnexion silencieuse des périphériques déjà autorisés */
+  try{ if(ENV.usb){ const [d]=await navigator.usb.getDevices(); if(d) await usbOpen(d); navigator.usb.addEventListener('disconnect',()=>{_link.usb=null;}); } }catch(e){}
+  try{ if(ENV.serial){ const [p]=await navigator.serial.getPorts(); if(p) await serOpen(p); } }catch(e){}
+})();
+
+/* ---- Pilotes d'envoi ---- */
+async function bleWrite(l,bytes){
+  if(!l.dev.gatt.connected) await btOpen(l.dev);
+  const ch=_link.bt.ch;
+  for(let i=0;i<bytes.length;i+=100){
+    const part=bytes.slice(i,i+100);
+    if(ch.properties.writeWithoutResponse) await ch.writeValueWithoutResponse(part); else await ch.writeValue(part);
+    await sleep(25);
+  }
+}
+function systemPrint(v){
+  const w=pcfg().width; $('#receiptPrint').innerHTML=buildReceiptThermalHTML(v);
+  let st=document.getElementById('pageStyle'); if(!st){ st=document.createElement('style'); st.id='pageStyle'; document.head.appendChild(st); }
+  st.textContent=w?`@page{size:${w}mm auto;margin:2mm}.thermal{width:${w-4}mm}`:'@page{margin:12mm}';
+  window.print();
+}
+const DRV={
+  rawbt:async x=>{ sendToRawBT(x.text); return true; },
+  relay:async x=>{ await sendPrintJobToStation(x.text); return true; },
+  usb:async x=>{ const l=_link.usb; if(!l) return false; await l.dev.transferOut(l.ep,x.bytes); return true; },
+  serial:async x=>{ const p=_link.serial; if(!p) return false; const w=p.writable.getWriter(); try{ await w.write(x.bytes); }finally{ w.releaseLock(); } return true; },
+  bt:async x=>{ if(!_link.bt) return false; await bleWrite(_link.bt,x.bytes); return true; },
+  system:async x=>{ systemPrint(x.v); return true; }
+};
+function autoOrder(){
+  if(getPrintMode()==='distant') return ['relay','system'];
+  const o=['usb','serial','bt'].filter(k=>_link[k]);
+  if(ENV.android) o.push('rawbt');
+  o.push('system'); return o;
+}
+async function printReceipt(v){
+  const c=pcfg(), text=buildEscPosReceipt(v).repeat(c.copies||1);
+  const x={v,text,bytes:encodeText(text,c.enc)};
+  for(const m of (c.method==='auto'?autoOrder():[c.method,'system'])){
+    try{ if(await DRV[m](x)) return m; }catch(e){ console.warn('Impression',m,e); }
+  }
+  return null;
+}
+async function printReceiptNow(){
   if(_receiptPrinted || !_lastVente) return;
   _receiptPrinted = true;
-  const escpos = buildEscPosReceipt(_lastVente);
-  if(getPrintMode() === 'distant'){
-    sendPrintJobToStation(escpos);
-  } else {
-    sendToRawBT(escpos);
-  }
+  const m = await printReceipt(_lastVente);
+  if(!m){ _receiptPrinted = false; toast('Impression impossible — vérifiez les réglages.'); return; }
   closeModal();
 }
-function printReceiptSystemFallback(){
-  window.print();
-  closeModal();
+function printReceiptSystemFallback(){ systemPrint(_lastVente); closeModal(); }
+async function printTest(){
+  const m=await printReceipt({numero:'TEST-'+String(Date.now()).slice(-4),date:nowISO(),vendeurNom:'Test',
+    lignes:[{categorie:'Test',nom:'Article de test éàç',quantite:1,prixUnitaire:100,total:100}],
+    totalBrut:100,rabais:0,total:100,montantPaye:100,solde:0,paymentMeth:'Cash'});
+  toast(m?'🖨 Test envoyé via '+m:'Échec du test');
 }
+/* Côté poste imprimante (Sunmi OU PC) : imprime en direct si une imprimante est connectée, sinon RawBT */
+async function stationPrint(text){
+  const k=['usb','serial','bt'].find(k=>_link[k]);
+  if(k) await DRV[k]({bytes:encodeText(text,'ascii')}); else sendToRawBT(text);
+}
+
+function renderPrintCfg(){
+  const b=document.getElementById('printCfgBox'); if(!b) return; const c=pcfg();
+  const sel=(k,o)=>`<select onchange="setPcfg('${k}',this.value)">${o.map(([v,t])=>`<option value="${v}" ${String(c[k])===String(v)?'selected':''}>${t}</option>`).join('')}</select>`;
+  const chk=(k,t)=>`<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-top:8px;"><input type="checkbox" ${c[k]?'checked':''} onchange="setPcfg('${k}',this.checked)"> ${t}</label>`;
+  const btn=(k,t,ok)=>ok?`<button class="btn btn-ghost btn-sm" onclick="connectPrinter('${k}')">${t}</button>`:'';
+  const on=[['usb','USB'],['serial','Série/COM'],['bt','Bluetooth']].filter(([k])=>_link[k]).map(x=>x[1]);
+  b.innerHTML=`<h3 style="font-size:15px;margin-bottom:4px;">🖨 Impression universelle</h3>
+    <p class="faint" style="font-size:12.5px;margin:0 0 12px;">Méthode active : <b>${c.method==='auto'?'auto → '+autoOrder()[0]:c.method}</b> · ${on.length?'Connectée : '+on.join(', '):'aucune imprimante directe'}</p>
+    <div class="field"><label>Méthode</label>${sel('method',[['auto','Automatique (recommandé)'],['rawbt','RawBT (Android / Sunmi)'],['usb','USB direct'],['serial','Série / COM'],['bt','Bluetooth BLE'],['relay','Relais vers poste imprimante'],['system','Impression système']])}</div>
+    <div class="field"><label>Largeur du papier</label>${sel('width',[[58,'Ticket 58 mm'],[80,'Ticket 80 mm'],[0,'Page standard (A4)']])}</div>
+    <div class="field"><label>Accents</label>${sel('enc',[['ascii','Sans accents (sûr)'],['cp858','Avec accents (CP858)']])}</div>
+    <div class="field"><label>Copies</label>${sel('copies',[[1,'1'],[2,'2'],[3,'3']])}</div>
+    ${chk('auto','Imprimer automatiquement après chaque vente')}${chk('cut','Coupe automatique du papier')}${chk('drawer','Ouvrir le tiroir-caisse')}
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;">${btn('usb','🔌 Connecter USB',ENV.usb)}${btn('serial','🔗 Connecter COM',ENV.serial)}${btn('bt','📡 Connecter Bluetooth',ENV.bt)}<button class="btn btn-primary btn-sm" onclick="printTest()">🧪 Test d'impression</button></div>
+    <p class="faint" style="font-size:11.5px;margin-top:10px;">PC : Chrome/Edge pour USB, COM et Bluetooth. Sans imprimante directe, l'impression système est utilisée (lancer Chrome avec <code>--kiosk-printing</code> pour supprimer la boîte de dialogue). iPhone/iPad : utiliser le relais ou l'impression système.</p>`;
+}
+(()=>{ const _rp=renderParametres; renderParametres=function(){ _rp.apply(this,arguments); renderPrintCfg(); }; })();
 
 /* ============ MODE 2 : IMPRESSION DISTANTE VERS UN SUNMI V2 (relais Firestore, 100% web) ============
    Principe :
@@ -1748,7 +1847,7 @@ function attachPrintJobsListener(bizId, myDeviceId){
         try{
           const bytes = Uint8Array.from(atob(job.escposB64), c => c.charCodeAt(0));
           const text = new TextDecoder('latin1').decode(bytes);
-          sendToRawBT(text);
+          await stationPrint(text);
           await fsDB.collection('printJobs').doc(job.id).set({status:'printed', printedAt: nowISO(), printedBy: myDeviceId}, {merge:true});
           toast(`🖨 Reçu ${job.numero||''} imprimé depuis la tablette ✓`, 'ok');
         }catch(e){
@@ -1867,7 +1966,7 @@ function showReceipt(v){
     <p class="faint" style="font-size:12.5px;">${fmtDateTime(v.date)} · ${escapeHtml(v.vendeurNom)}</p>
     <table style="margin-top:12px;"><thead><tr><th>Article</th><th>Qté</th><th>Total</th></tr></thead><tbody>${linesHtml}</tbody></table>
     <div style="display:flex;justify-content:space-between;margin:14px 0;font-weight:700;"><span>Total (${escapeHtml(v.paymentMeth)})</span><span class="mono">${fmtMoney(v.total)}</span></div>
-    <p class="faint" style="font-size:11.5px;margin-bottom:10px;">Impression automatique en cours (RawBT)...</p>
+    <p class="faint" style="font-size:11.5px;margin-bottom:10px;">Impression automatique en cours...</p>
     <div style="display:flex;gap:10px;">
       <button class="btn btn-ghost" style="flex:1;" onclick="closeModal()">Fermer</button>
       <button class="btn btn-primary" style="flex:1;" onclick="printReceiptNow()">🖨 Réimprimer</button>
@@ -1875,7 +1974,7 @@ function showReceipt(v){
     <button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px;" onclick="printReceiptSystemFallback()">RawBT non installé ? Imprimer via le système</button>
   `);
 
-  setTimeout(printReceiptNow, 300);
+  if(pcfg().auto) setTimeout(printReceiptNow, 300);
 }
 
 function showReceiptFromHistory(id){
